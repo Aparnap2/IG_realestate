@@ -1,8 +1,7 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://zkovupxpxnwyvkjabeqt.supabase.co'
-const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inprb3Z1cHhweG53eXZramFiZXF0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTgxNzM4NjMsImV4cCI6MjA3Mzc0OTg2M30.Ej8Ej8Ej8Ej8Ej8Ej8Ej8Ej8Ej8Ej8Ej8Ej8Ej8'
-
+const supabaseUrl = process.env.VITE_SUPABASE_URL 
+const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY 
 const supabase = createClient(supabaseUrl, supabaseKey)
 
 async function setupTestDatabase() {
