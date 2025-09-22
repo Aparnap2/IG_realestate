@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabaseClient'
+import { useEffect } from 'react'
 
 interface Property {
   id: string
@@ -25,6 +26,59 @@ export const useProperties = () => {
       return data as Property[]
     }
   })
+
+  // Subscribe to real-time changes
+  useEffect(() => {
+    const channel = supabase
+      .channel('properties-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'properties',
+        },
+        (payload) => {
+          queryClient.setQueryData(['properties'], (old: Property[] | undefined) => [
+            payload.new as Property,
+            ...(old || []),
+          ])
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'properties',
+        },
+        (payload) => {
+          queryClient.setQueryData(['properties'], (old: Property[] | undefined) =>
+            (old || []).map((property) =>
+              property.id === payload.new.id ? (payload.new as Property) : property
+            )
+          )
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'properties',
+        },
+        (payload) => {
+          queryClient.setQueryData(['properties'], (old: Property[] | undefined) =>
+            (old || []).filter((property) => property.id !== payload.old.id)
+          )
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [queryClient])
 
   const addPropertyMutation = useMutation({
     mutationFn: async (property: Omit<Property, 'id'>) => {

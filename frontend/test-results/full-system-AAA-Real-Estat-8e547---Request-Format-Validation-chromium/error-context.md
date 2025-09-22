@@ -1,0 +1,48 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]: "[plugin:@tailwindcss/vite:generate:serve]"
+    - generic [ref=e6]: "Cannot apply unknown utility class `border-border`. Are you using CSS modules or similar and missing `@reference`? https://tailwindcss.com/docs/functions-and-directives#reference-directive"
+  - generic [ref=e7]: /home/aparna/Desktop/IG_RealEstate/frontend/src/index.css
+  - generic [ref=e8]:
+    - text: at onInvalidCandidate (
+    - generic [ref=e9] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/tailwindcss@4.1.13/node_modules/tailwindcss/dist/chunk-U5SIPDGO.mjs:18:1332
+    - text: ) at pe (
+    - generic [ref=e10] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/tailwindcss@4.1.13/node_modules/tailwindcss/dist/chunk-U5SIPDGO.mjs:13:29888
+    - text: ) at
+    - generic [ref=e11] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/tailwindcss@4.1.13/node_modules/tailwindcss/dist/chunk-U5SIPDGO.mjs:18:373
+    - text: at D (
+    - generic [ref=e12] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/tailwindcss@4.1.13/node_modules/tailwindcss/dist/chunk-U5SIPDGO.mjs:3:1656
+    - text: ) at Oe (
+    - generic [ref=e13] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/tailwindcss@4.1.13/node_modules/tailwindcss/dist/chunk-U5SIPDGO.mjs:18:172
+    - text: ) at ti (
+    - generic [ref=e14] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/tailwindcss@4.1.13/node_modules/tailwindcss/dist/chunk-U5SIPDGO.mjs:35:780
+    - text: ) at async mn (
+    - generic [ref=e15] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/tailwindcss@4.1.13/node_modules/tailwindcss/dist/chunk-U5SIPDGO.mjs:35:1123
+    - text: ) at async $a (
+    - generic [ref=e16] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/tailwindcss@4.1.13/node_modules/tailwindcss/dist/chunk-U5SIPDGO.mjs:35:1898
+    - text: ) at async $a (
+    - generic [ref=e17] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/@tailwindcss+node@4.1.13/node_modules/@tailwindcss/node/dist/index.mjs:10:3433
+    - text: ) at async C.generate (
+    - generic [ref=e18] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/@tailwindcss+vite@4.1.13_vite@7.1.5_@types+node@24.5.1_jiti@2.5.1_lightningcss@1.30.1_/node_modules/@tailwindcss/vite/dist/index.mjs:1:3571
+    - text: ) at async TransformPluginContext.transform (
+    - generic [ref=e19] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/@tailwindcss+vite@4.1.13_vite@7.1.5_@types+node@24.5.1_jiti@2.5.1_lightningcss@1.30.1_/node_modules/@tailwindcss/vite/dist/index.mjs:1:1949
+    - text: ) at async EnvironmentPluginContainer.transform (
+    - generic [ref=e20] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/vite@7.1.5_@types+node@24.5.1_jiti@2.5.1_lightningcss@1.30.1/node_modules/vite/dist/node/chunks/dep-M_KD0XSK.js:31325:14
+    - text: ) at async loadAndTransform (
+    - generic [ref=e21] [cursor=pointer]: file:///home/aparna/Desktop/IG_RealEstate/frontend/node_modules/.pnpm/vite@7.1.5_@types+node@24.5.1_jiti@2.5.1_lightningcss@1.30.1/node_modules/vite/dist/node/chunks/dep-M_KD0XSK.js:26407:26
+    - text: )
+  - generic [ref=e22]:
+    - text: Click outside, press
+    - generic [ref=e23]: Esc
+    - text: key, or fix the code to dismiss.
+    - text: You can also disable this overlay by setting
+    - code [ref=e24]: server.hmr.overlay
+    - text: to
+    - code [ref=e25]: "false"
+    - text: in
+    - code [ref=e26]: vite.config.ts
+    - text: .
+```

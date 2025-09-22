@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabaseClient'
+import { useEffect } from 'react'
 
 interface Lead {
   id: string
@@ -16,6 +17,7 @@ interface Lead {
   meeting_slot: string | null
   status: string
   created_at: string
+  history: Array<{message: string, timestamp: string, agent: string}> | null
 }
 
 export const useLeads = () => {
@@ -35,46 +37,57 @@ export const useLeads = () => {
   })
 
   // Subscribe to real-time changes
-  // Note: This is a simplified implementation. In a production app, you might want to handle
-  // the subscription lifecycle more carefully.
-  // useEffect(() => {
-  //   const channel = supabase
-  //     .channel('leads-changes')
-  //     .on(
-  //       'postgres_changes',
-  //       {
-  //         event: 'INSERT',
-  //         schema: 'public',
-  //         table: 'leads',
-  //       },
-  //       (payload) => {
-  //         queryClient.setQueryData(['leads'], (old: Lead[] | undefined) => [
-  //           payload.new as Lead,
-  //           ...(old || []),
-  //         ])
-  //       }
-  //     )
-  //     .on(
-  //       'postgres_changes',
-  //       {
-  //         event: 'UPDATE',
-  //         schema: 'public',
-  //         table: 'leads',
-  //       },
-  //       (payload) => {
-  //         queryClient.setQueryData(['leads'], (old: Lead[] | undefined) =>
-  //           (old || []).map((lead) =>
-  //             lead.id === payload.new.id ? (payload.new as Lead) : lead
-  //           )
-  //         )
-  //       }
-  //     )
-  //     .subscribe()
+  useEffect(() => {
+    const channel = supabase
+      .channel('leads-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'leads',
+        },
+        (payload) => {
+          queryClient.setQueryData(['leads'], (old: Lead[] | undefined) => [
+            payload.new as Lead,
+            ...(old || []),
+          ])
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'leads',
+        },
+        (payload) => {
+          queryClient.setQueryData(['leads'], (old: Lead[] | undefined) =>
+            (old || []).map((lead) =>
+              lead.id === payload.new.id ? (payload.new as Lead) : lead
+            )
+          )
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'leads',
+        },
+        (payload) => {
+          queryClient.setQueryData(['leads'], (old: Lead[] | undefined) =>
+            (old || []).filter((lead) => lead.id !== payload.old.id)
+          )
+        }
+      )
+      .subscribe()
 
-  //   return () => {
-  //     supabase.removeChannel(channel)
-  //   }
-  // }, [queryClient])
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [queryClient])
 
   return { leads: leads || [], isLoading, error }
 }

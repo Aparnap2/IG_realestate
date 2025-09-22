@@ -1,160 +1,100 @@
-import { useState } from 'react'
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { LeadTable } from "@/components/LeadTable"
-import { PropertyCard } from "@/components/PropertyCard"
-import { PropertyForm } from "@/components/PropertyForm"
-import { ConfigForm } from "@/components/ConfigForm"
-import { useLeads } from '@/hooks/useLeads'
-import { useProperties } from '@/hooks/useProperties'
-import { useConfigs } from '@/hooks/useConfigs'
-import { useAuth } from '@/hooks/useAuth'
+import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useAuth } from '../hooks/useAuth'
+import { useQuery } from '@tanstack/react-query'
+import { supabase } from '../lib/supabase'
+import LeadsTable from './LeadsTable'
+import MetricsCards from './MetricsCards'
+import HITLPanel from './HITLPanel'
 
-export function Dashboard() {
-  const { leads, isLoading: leadsLoading } = useLeads()
-  const { properties, isLoading: propertiesLoading, deleteProperty } = useProperties()
-  const { configs } = useConfigs()
-  const { signOut } = useAuth()
-  
-  const [activeTab, setActiveTab] = useState("leads")
-  const [editingProperty, setEditingProperty] = useState<any | null>(null)
+export default function Dashboard() {
+  const { user, loading, signOut } = useAuth()
+  const navigate = useNavigate()
 
-  // Find specific configs
-  const qualifierPrompt = configs.find(c => c.key === "qualifier_prompt")?.value || ""
-  const schedulerPrompt = configs.find(c => c.key === "scheduler_prompt")?.value || ""
-  const followupPrompt = configs.find(c => c.key === "followup_prompt")?.value || ""
+  useEffect(() => {
+    if (!loading && !user) {
+      navigate('/login')
+    }
+  }, [user, loading, navigate])
 
-  const handleEditProperty = (property: any) => {
-    setEditingProperty(property)
-    setActiveTab("add-property")
+  const { data: leads, isLoading } = useQuery({
+    queryKey: ['leads'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('leads')
+        .select('*')
+        .order('created_at', { ascending: false })
+      
+      if (error) throw error
+      return data
+    },
+    enabled: !!user,
+  })
+
+  const { data: metrics } = useQuery({
+    queryKey: ['metrics'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('leads')
+        .select('status, qualified_score')
+      
+      if (error) throw error
+      
+      const total = data.length
+      const qualified = data.filter(l => l.qualified_score && l.qualified_score > 0.7).length
+      const scheduled = data.filter(l => l.status === 'scheduled').length
+      const avgScore = data.reduce((acc, l) => acc + (l.qualified_score || 0), 0) / total
+      
+      return { total, qualified, scheduled, avgScore }
+    },
+    enabled: !!user,
+  })
+
+  if (loading) {
+    return <div className="flex items-center justify-center min-h-screen">Loading...</div>
   }
 
-  const handleDeleteProperty = async (id: string) => {
-    if (window.confirm("Are you sure you want to delete this property?")) {
-      try {
-        await deleteProperty(id)
-      } catch (err) {
-        console.error("Failed to delete property:", err)
-        alert("Failed to delete property. Please try again.")
-      }
-    }
+  if (!user) {
+    return null
   }
 
   return (
-    <div className="container mx-auto py-8">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">Real Estate Lead Dashboard</h1>
-        <Button onClick={signOut}>Sign Out</Button>
-      </div>
-      
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="leads">Leads</TabsTrigger>
-          <TabsTrigger value="properties">Properties</TabsTrigger>
-          <TabsTrigger value="add-property">
-            {editingProperty ? "Edit Property" : "Add Property"}
-          </TabsTrigger>
-          <TabsTrigger value="configs">Configurations</TabsTrigger>
-        </TabsList>
-        
-        <TabsContent value="leads" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Lead Pipeline</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <LeadTable leads={leads} loading={leadsLoading} />
-            </CardContent>
-          </Card>
-        </TabsContent>
-        
-        <TabsContent value="properties" className="mt-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {propertiesLoading ? (
-              <p>Loading properties...</p>
-            ) : (
-              properties.map((property) => (
-                <PropertyCard
-                  key={property.id}
-                  property={property}
-                  onEdit={handleEditProperty}
-                  onDelete={handleDeleteProperty}
-                />
-              ))
-            )}
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-white shadow">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center py-6">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">
+                AAA Real Estate Dashboard
+              </h1>
+              <p className="text-gray-600">Lead Management & Analytics</p>
+            </div>
+            <button
+              onClick={signOut}
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium"
+            >
+              Sign Out
+            </button>
           </div>
-        </TabsContent>
-        
-        <TabsContent value="add-property" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>
-                {editingProperty ? "Edit Property" : "Add New Property"}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <PropertyForm
-                property={editingProperty}
-                onSuccess={() => {
-                  setEditingProperty(null)
-                  setActiveTab("properties")
-                }}
-                onCancel={() => {
-                  setEditingProperty(null)
-                  setActiveTab("properties")
-                }}
-              />
-            </CardContent>
-          </Card>
-        </TabsContent>
-        
-        <TabsContent value="configs" className="mt-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <Card>
-              <CardHeader>
-                <CardTitle>Qualifier Prompt</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ConfigForm
-                  keyName="qualifier_prompt"
-                  initialValue={qualifierPrompt}
-                  label="Qualifier Agent Prompt"
-                  description="Prompt used by the qualifier agent to score leads"
-                />
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle>Scheduler Prompt</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ConfigForm
-                  keyName="scheduler_prompt"
-                  initialValue={schedulerPrompt}
-                  label="Scheduler Agent Prompt"
-                  description="Prompt used by the scheduler agent to book meetings"
-                />
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle>FollowUp Prompt</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ConfigForm
-                  keyName="followup_prompt"
-                  initialValue={followupPrompt}
-                  label="FollowUp Agent Prompt"
-                  description="Prompt used by the followup agent to nurture leads"
-                />
-              </CardContent>
-            </Card>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+        <div className="px-4 py-6 sm:px-0">
+          {/* Metrics Cards */}
+          <MetricsCards metrics={metrics} />
+
+          {/* HITL Panel */}
+          <HITLPanel />
+
+          {/* Leads Table */}
+          <div className="mt-8">
+            <LeadsTable leads={leads} isLoading={isLoading} />
           </div>
-        </TabsContent>
-      </Tabs>
+        </div>
+      </main>
     </div>
   )
 }

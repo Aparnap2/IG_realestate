@@ -1,49 +1,40 @@
-from langgraph.graph import StateGraph, END
-from ..agents.qualifier import qualifier_node
-from ..agents.scheduler import scheduler_node
-from ..agents.followup import followup_node
-from ..schemas.state import AgentState
-from ..tools.handoffs import handoff_to_scheduler, handoff_to_followup, handoff_to_end
+"""
+Main workflow module for the AAA Real Estate Lead Capture Agentic AI System.
+
+This module provides the entry point for creating the LangGraph workflow
+according to PRD specifications.
+"""
+import sys
+import os
+
+# Add the parent directory to the path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from agents.prd_compliant_workflow import create_prd_compliant_workflow
+from utils.redis_client import test_redis_connection
 
 def create_workflow():
     """
-    Create the LangGraph workflow for the lead capture system.
+    Create the main LangGraph workflow for lead processing.
+    
+    This function creates a PRD-compliant workflow with:
+    - Three ReAct agents (Qualifier, Scheduler, FollowUp)
+    - Redis checkpointer for state persistence
+    - HITL interrupts for high-value leads
+    - Proper handoff mechanisms
+    - Database query tools with caching
     
     Returns:
         Compiled LangGraph workflow
     """
-    # Define a new graph
-    workflow = StateGraph(AgentState)
-
-    # Add nodes
-    workflow.add_node("qualifier", qualifier_node)
-    workflow.add_node("scheduler", scheduler_node)
-    workflow.add_node("followup", followup_node)
-
-    # Add edges
-    workflow.add_conditional_edges(
-        "qualifier",
-        lambda state: state["next_agent"],
-        {
-            "scheduler": "scheduler",
-            "followup": "followup",
-            "end": END
-        }
-    )
+    # Test Redis connection first
+    if not test_redis_connection():
+        raise RuntimeError("Redis connection failed. Please ensure Redis is running.")
     
-    workflow.add_conditional_edges(
-        "scheduler",
-        lambda state: state["next_agent"],
-        {
-            "followup": "followup",
-            "end": END
-        }
-    )
-    
-    workflow.add_edge("followup", END)
+    # Create and return the PRD-compliant workflow
+    return create_prd_compliant_workflow()
 
-    # Set the entry point
-    workflow.set_entry_point("qualifier")
-
-    # Compile the graph
-    return workflow.compile()
+# For backward compatibility
+def get_workflow():
+    """Get the workflow instance (alias for create_workflow)"""
+    return create_workflow()

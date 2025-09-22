@@ -11,23 +11,11 @@ services:
       - backend/.env
     depends_on:
       - redis
-      - db
   
   redis:
     image: redis:latest
     ports:
       - "6379:6379"
-  
-  db:
-    image: postgres:13
-    environment:
-      POSTGRES_USER: supabase
-      POSTGRES_PASSWORD: supabase
-      POSTGRES_DB: supabase
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
 
   celery_worker:
     build:
@@ -38,7 +26,6 @@ services:
       - backend/.env
     depends_on:
       - redis
-      - db
 
   celery_beat:
     build:
@@ -49,7 +36,3 @@ services:
       - backend/.env
     depends_on:
       - redis
-      - db
-
-volumes:
-  postgres_data:

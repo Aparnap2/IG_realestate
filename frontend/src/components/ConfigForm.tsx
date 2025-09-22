@@ -10,9 +10,22 @@ interface ConfigFormProps {
   initialValue: string
   label: string
   description?: string
+  type?: 'text' | 'number' | 'textarea'
+  step?: string
+  min?: string
+  max?: string
 }
 
-export function ConfigForm({ keyName, initialValue, label, description }: ConfigFormProps) {
+export function ConfigForm({ 
+  keyName, 
+  initialValue, 
+  label, 
+  description,
+  type = 'textarea',
+  step,
+  min,
+  max
+}: ConfigFormProps) {
   const [value, setValue] = useState(initialValue)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -37,17 +50,47 @@ export function ConfigForm({ keyName, initialValue, label, description }: Config
     }
   }
 
+  const renderInput = () => {
+    switch (type) {
+      case 'textarea':
+        return (
+          <Textarea
+            id={keyName}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            rows={4}
+          />
+        )
+      case 'number':
+        return (
+          <Input
+            id={keyName}
+            type="number"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            step={step}
+            min={min}
+            max={max}
+          />
+        )
+      default:
+        return (
+          <Input
+            id={keyName}
+            type="text"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        )
+    }
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <Label htmlFor={keyName}>{label}</Label>
         {description && <p className="text-sm text-gray-500">{description}</p>}
-        <Textarea
-          id={keyName}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          rows={4}
-        />
+        {renderInput()}
       </div>
       
       {error && <div className="text-red-500 text-sm">{error}</div>}

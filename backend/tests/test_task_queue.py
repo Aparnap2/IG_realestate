@@ -1,7 +1,13 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from backend.models.lead import Lead
-from backend.utils.task_queue import queue_lead_for_processing
+import sys
+import os
+
+# Add the parent directory to the path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from models.lead import Lead
+from utils.task_queue import queue_lead_for_processing
 
 @pytest.fixture
 def sample_lead():
@@ -15,7 +21,7 @@ def sample_lead():
         property_type="2BHK"
     )
 
-@patch('backend.utils.task_queue.process_lead_task')
+@patch('utils.task_queue.process_lead_task')
 def test_queue_lead_for_processing(mock_process, sample_lead):
     # Mock the Celery task
     mock_task = MagicMock()

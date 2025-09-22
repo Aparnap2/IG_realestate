@@ -134,6 +134,10 @@ mypy .
 └── ...
 ```
 
+## Queueing System
+
+This system uses Redis as the message broker and result backend for Celery tasks. While the original PRD specified RabbitMQ, we've chosen Redis for its simplicity and performance in this context. Redis provides excellent performance for our use case and is easier to set up and maintain.
+
 ## Contributing
 
 1. Fork the repository

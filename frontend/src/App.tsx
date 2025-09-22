@@ -1,18 +1,25 @@
-import { useAuth } from '@/hooks/useAuth'
-import { LoginForm } from '@/components/LoginForm'
-import { Dashboard } from '@/components/Dashboard'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import Dashboard from './components/Dashboard'
+import Login from './components/Login'
+import { AuthProvider } from './hooks/useAuth'
+
+const queryClient = new QueryClient()
 
 function App() {
-  const { user, loading } = useAuth()
-
-  if (loading) {
-    return <div className="flex items-center justify-center h-screen">Loading...</div>
-  }
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      {user ? <Dashboard /> : <LoginForm />}
-    </div>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <Router>
+          <div className="min-h-screen bg-gray-50">
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/" element={<Dashboard />} />
+            </Routes>
+          </div>
+        </Router>
+      </AuthProvider>
+    </QueryClientProvider>
   )
 }
 

@@ -1,8 +1,14 @@
 import pytest
 from unittest.mock import patch, MagicMock
-from backend.models.lead import Lead
-from backend.agents.qualifier import qualifier_node
-from backend.schemas.state import AgentState
+import sys
+import os
+
+# Add the parent directory to the path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from models.lead import Lead
+from agents.qualifier import qualifier_node
+from schemas.state import AgentState
 
 @pytest.fixture
 def sample_lead():
@@ -25,9 +31,9 @@ def sample_state(sample_lead):
         next_agent="qualifier"
     )
 
-@patch('backend.agents.qualifier.query_properties_db')
-@patch('backend.agents.qualifier.get_llm_response')
-@patch('backend.agents.qualifier.cache_query_result')
+@patch('agents.qualifier.query_properties_db')
+@patch('agents.qualifier.get_llm_response')
+@patch('agents.qualifier.cache_query_result')
 def test_qualifier_node(mock_cache, mock_llm, mock_db, sample_state):
     # Mock the database response
     mock_db.return_value = [

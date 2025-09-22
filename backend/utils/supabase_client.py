@@ -55,3 +55,25 @@ def save_lead(lead_data: Dict[str, Any]) -> Dict[str, Any]:
     response = supabase.table("leads").upsert(lead_data).execute()
     
     return response.data[0] if response.data else {}
+
+def get_config(key: str, default_value: str = "") -> str:
+    """
+    Get a configuration value from the Supabase database.
+    
+    Args:
+        key: Configuration key
+        default_value: Default value if key is not found
+        
+    Returns:
+        Configuration value or default value
+    """
+    try:
+        response = supabase.table("configs").select("value").eq("key", key).execute()
+        
+        if response.data:
+            return response.data[0]["value"]
+        else:
+            return default_value
+    except Exception as e:
+        print(f"Error getting config for key {key}: {e}")
+        return default_value

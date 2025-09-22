@@ -1,6 +1,13 @@
-from ..utils.supabase_client import save_lead
-from ..tools.handoffs import handoff_to_end
-from ..schemas.state import AgentState
+import sys
+import os
+from datetime import datetime
+
+# Add the parent directory to the path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from utils.supabase_client import save_lead
+from tools.handoffs import handoff_to_end
+from schemas.state import AgentState
 from typing import Dict, Any
 
 def followup_node(state: AgentState) -> Dict[str, Any]:
@@ -22,12 +29,10 @@ def followup_node(state: AgentState) -> Dict[str, Any]:
     followup_message = "Thank you for your interest! Here are some properties that might match your criteria."
     
     # Add the followup message to the lead's history
-    if not hasattr(lead, 'history'):
-        lead.history = []
-    
     lead.history.append({
         "message": followup_message,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "agent": "followup"
     })
     
     # Save updated lead information
