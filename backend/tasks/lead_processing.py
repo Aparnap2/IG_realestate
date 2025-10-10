@@ -160,20 +160,6 @@ def process_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
             
             user_id = sender.get("id")
             message_text = message.get("text", "")
-            
-        elif channel == "whatsapp":
-            # Process WhatsApp webhook
-            entry = webhook_data.get("entry", [{}])[0]
-            changes = entry.get("changes", [{}])[0]
-            value = changes.get("value", {})
-            messages = value.get("messages", [{}])
-            
-            if messages:
-                msg = messages[0]
-                user_id = msg.get("from")
-                message_text = msg.get("text", {}).get("body", "")
-            else:
-                raise ValueError("No messages found in WhatsApp webhook")
         else:
             raise ValueError(f"Unsupported channel: {channel}")
         

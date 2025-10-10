@@ -24,7 +24,7 @@ def followup_node(state: AgentState) -> Dict[str, Any]:
     
     # Send a followup message (simplified implementation)
     # In a real implementation, this would integrate with Meta APIs
-    # to send messages via Instagram or WhatsApp
+    # to send messages via Instagram
     
     followup_message = "Thank you for your interest! Here are some properties that might match your criteria."
     

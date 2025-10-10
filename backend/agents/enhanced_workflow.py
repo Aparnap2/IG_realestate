@@ -10,11 +10,11 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
 import json
 
-from ..utils.redis_client import redis_client
-from ..utils.supabase_client import query_properties_db, save_lead, get_config
-from ..utils.llm_client import get_llm_response
-from ..models.lead import Lead
-from ..schemas.state import AgentState
+from backend.utils.redis_client import redis_client
+from backend.utils.supabase_client import query_properties_db, save_lead, get_config
+from backend.utils.llm_client import get_llm_response
+from backend.models.lead import Lead
+from backend.schemas.state import AgentState
 
 class ConversationState(BaseModel):
     """Enhanced state model with conversation history and context"""

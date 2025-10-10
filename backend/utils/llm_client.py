@@ -2,21 +2,25 @@
 LLM client for OpenRouter API integration according to PRD specifications.
 """
 import os
-import openai
+import aiohttp
+import asyncio
+import json
 from typing import Optional, Dict, Any
+from dotenv import load_dotenv
 
-# Configure OpenAI client for OpenRouter
-openai.api_base = "https://openrouter.ai/api/v1"
-openai.api_key = os.getenv("OPENROUTER_API_KEY")
+load_dotenv()
 
-def get_llm_response(
+# Default model selection
+DEFAULT_OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet")
+
+async def get_llm_response(
     prompt: str,
-    model: str = "anthropic/claude-3.5-sonnet",
+    model: str = DEFAULT_OPENROUTER_MODEL,
     max_tokens: int = 1000,
     temperature: float = 0.7
 ) -> str:
     """
-    Get response from OpenRouter LLM.
+    Get response from OpenRouter LLM using async HTTP client.
     
     Args:
         prompt: The prompt to send to the LLM
@@ -27,22 +31,41 @@ def get_llm_response(
     Returns:
         LLM response text
     """
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        return "OpenRouter API key not configured"
+    
     try:
-        response = openai.ChatCompletion.create(
-            model=model,
-            messages=[
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=max_tokens,
-            temperature=temperature,
-            headers={
+        async with aiohttp.ClientSession() as session:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
                 "HTTP-Referer": "https://aaa-real-estate.com",
                 "X-Title": "AAA Real Estate Lead Capture System"
             }
-        )
-        
-        return response.choices[0].message.content.strip()
-        
+            
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            }
+            
+            async with session.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data["choices"][0]["message"]["content"].strip()
+                else:
+                    error_text = await response.text()
+                    print(f"OpenRouter API error: {response.status} - {error_text}")
+                    return "I apologize, but I'm having trouble processing your request right now. Please try again later."
+                    
     except Exception as e:
         print(f"Error getting LLM response: {e}")
         return "I apologize, but I'm having trouble processing your request right now. Please try again later."

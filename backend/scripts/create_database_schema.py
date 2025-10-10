@@ -25,7 +25,7 @@ def create_database_schema():
         CREATE TABLE IF NOT EXISTS leads (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             user_id VARCHAR NOT NULL,
-            channel VARCHAR NOT NULL CHECK (channel IN ('ig', 'whatsapp')),
+            channel VARCHAR NOT NULL CHECK (channel IN ('ig')),
             message TEXT NOT NULL,
             qualified_score FLOAT CHECK (qualified_score >= 0 AND qualified_score <= 1),
             budget INTEGER,

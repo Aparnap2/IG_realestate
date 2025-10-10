@@ -1,10 +1,11 @@
 """
-Webhook API endpoints for Instagram and WhatsApp integration.
+Webhook API endpoints for Instagram integration.
 
-This module handles incoming webhooks from Meta APIs (Instagram Graph API
-and WhatsApp Business API) according to PRD specifications.
+This module handles webhook verification and processing for Meta APIs
+(Instagram Graph API) according to PRD specifications.
 """
 from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 import hashlib
 import hmac
@@ -49,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 # Meta API configuration
 META_APP_SECRET = os.getenv("META_APP_SECRET")
-META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "aaa_real_estate_verify_token")
+META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "aaa_real_estate_verify_token_2025")
 
 class WebhookPayload(BaseModel):
     """Base webhook payload model"""
@@ -62,10 +63,7 @@ class InstagramWebhookEntry(BaseModel):
     time: int
     messaging: Optional[List[Dict[str, Any]]] = None
 
-class WhatsAppWebhookEntry(BaseModel):
-    """WhatsApp webhook entry model"""
-    id: str
-    changes: Optional[List[Dict[str, Any]]] = None
+
 
 def verify_meta_signature(payload: bytes, signature: str) -> bool:
     """
@@ -101,8 +99,7 @@ def verify_meta_signature(payload: bytes, signature: str) -> bool:
         logger.error(f"Error verifying signature: {e}")
         return False
 
-@app.get("/webhook/ig")
-@app.get("/webhook/whatsapp")
+@app.get("/webhook")
 async def webhook_verification(
     hub_mode: Optional[str] = None,
     hub_challenge: Optional[str] = None,
@@ -120,12 +117,12 @@ async def webhook_verification(
         hub_verify_token == META_VERIFY_TOKEN and 
         hub_challenge):
         logger.info("Webhook verification successful")
-        return int(hub_challenge)
+        return PlainTextResponse(content=str(hub_challenge), status_code=200)
     
     logger.warning("Webhook verification failed")
     raise HTTPException(status_code=403, detail="Verification failed")
 
-@app.post("/webhook/ig")
+@app.post("/webhook")
 @track_performance
 async def instagram_webhook(
     request: Request,
@@ -199,7 +196,7 @@ async def instagram_webhook(
         # Update metrics
         metrics_collector.increment_counter("instagram_webhooks_received")
         metrics_collector.increment_counter("instagram_messages_processed", len(results))
-        
+
         return {
             "status": "success",
             "processed": len(results),
@@ -211,103 +208,6 @@ async def instagram_webhook(
     except Exception as e:
         logger.error(f"Error processing Instagram webhook: {e}")
         metrics_collector.increment_counter("instagram_webhook_errors")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@app.post("/webhook/whatsapp")
-@track_performance
-async def whatsapp_webhook(
-    request: Request,
-    x_hub_signature_256: Optional[str] = Header(None)
-):
-    """
-    Handle WhatsApp Business API webhooks.
-    
-    This endpoint receives and processes WhatsApp messages according
-    to the PRD specifications.
-    """
-    try:
-        # Get raw payload for signature verification
-        payload = await request.body()
-        
-        # Verify signature (skip in development)
-        if os.getenv("ENVIRONMENT") != "development":
-            if not verify_meta_signature(payload, x_hub_signature_256 or ""):
-                logger.warning("Invalid WhatsApp webhook signature")
-                raise HTTPException(status_code=403, detail="Invalid signature")
-        
-        # Parse JSON payload
-        try:
-            webhook_data = json.loads(payload.decode('utf-8'))
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in WhatsApp webhook: {e}")
-            raise HTTPException(status_code=400, detail="Invalid JSON")
-        
-        logger.info(f"WhatsApp webhook received: {webhook_data}")
-        
-        # Validate webhook structure
-        if webhook_data.get("object") != "whatsapp_business_account":
-            logger.warning(f"Unexpected object type: {webhook_data.get('object')}")
-            return {"status": "ignored"}
-        
-        # Process each entry
-        results = []
-        for entry in webhook_data.get("entry", []):
-            if "changes" in entry:
-                for change in entry["changes"]:
-                    if change.get("field") == "messages":
-                        value = change.get("value", {})
-                        messages = value.get("messages", [])
-                        
-                        for message in messages:
-                            # Check if it's a text message
-                            if message.get("type") == "text":
-                                sender_id = message.get("from")
-                                message_text = message.get("text", {}).get("body")
-                                message_id = message.get("id")
-                                
-                                if sender_id and message_text:
-                                    # Prepare webhook data for processing
-                                    processed_webhook_data = {
-                                        "channel": "whatsapp",
-                                        "entry": [{
-                                            "changes": [{
-                                                "value": {
-                                                    "messages": [{
-                                                        "from": sender_id,
-                                                        "text": {"body": message_text},
-                                                        "id": message_id
-                                                    }]
-                                                }
-                                            }]
-                                        }]
-                                    }
-                                    
-                                    # Queue for processing
-                                    task_result = process_webhook(processed_webhook_data)
-                                    
-                                    results.append({
-                                        "sender_id": sender_id,
-                                        "task_id": task_result.id,
-                                        "status": "queued"
-                                    })
-                                    
-                                    logger.info(f"WhatsApp message queued: {sender_id} -> {task_result.id}")
-        
-        # Update metrics
-        metrics_collector.increment_counter("whatsapp_webhooks_received")
-        metrics_collector.increment_counter("whatsapp_messages_processed", len(results))
-        
-        return {
-            "status": "success",
-            "processed": len(results),
-            "results": results
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error processing WhatsApp webhook: {e}")
-        metrics_collector.increment_counter("whatsapp_webhook_errors")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/webhook/health")

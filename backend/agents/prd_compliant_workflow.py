@@ -29,7 +29,6 @@ from tools.agent_tools import (
     get_config_tool,
     qualify_lead_with_llm,
     send_instagram_message,
-    send_whatsapp_message,
     get_available_calendar_slots,
     book_calendar_event,
     create_hubspot_contact,
@@ -52,8 +51,7 @@ class QualifierAgent:
             query_properties_tool,
             qualify_lead_with_llm,
             get_config_tool,
-            send_instagram_message,
-            send_whatsapp_message
+            send_instagram_message
         ]
     
     def process(self, state: AgentState) -> Dict[str, Any]:
@@ -117,16 +115,10 @@ class QualifierAgent:
                     response_msg = f"Thank you for your interest! I found {len(db_results)} properties in your area. Let me share some options with you."
             
             # Send response
-            if lead.channel == "ig":
-                send_instagram_message.invoke({
-                    "user_id": lead.user_id,
-                    "message": response_msg
-                })
-            else:
-                send_whatsapp_message.invoke({
-                    "user_id": lead.user_id,
-                    "message": response_msg
-                })
+            send_instagram_message.invoke({
+                "user_id": lead.user_id,
+                "message": response_msg
+            })
             
             # Add response to messages
             messages.append({
@@ -180,8 +172,7 @@ class SchedulerAgent:
             book_calendar_event,
             create_hubspot_contact,
             create_hubspot_deal,
-            send_instagram_message,
-            send_whatsapp_message
+            send_instagram_message
         ]
     
     def process(self, state: AgentState) -> Dict[str, Any]:
@@ -253,16 +244,10 @@ class SchedulerAgent:
                     response_msg = f"Here are some available times for your property tour:\n{slots_text}\n\nWhich time works best for you?"
             
             # Send response
-            if lead.channel == "ig":
-                send_instagram_message.invoke({
-                    "user_id": lead.user_id,
-                    "message": response_msg
-                })
-            else:
-                send_whatsapp_message.invoke({
-                    "user_id": lead.user_id,
-                    "message": response_msg
-                })
+            send_instagram_message.invoke({
+                "user_id": lead.user_id,
+                "message": response_msg
+            })
             
             # Add response to messages
             messages.append({
@@ -302,8 +287,7 @@ class FollowUpAgent:
     def __init__(self):
         self.tools = [
             query_properties_tool,
-            send_instagram_message,
-            send_whatsapp_message
+            send_instagram_message
         ]
     
     def process(self, state: AgentState) -> Dict[str, Any]:
@@ -332,16 +316,10 @@ class FollowUpAgent:
                 )
             
             # Send response
-            if lead.channel == "ig":
-                send_instagram_message.invoke({
-                    "user_id": lead.user_id,
-                    "message": response_msg
-                })
-            else:
-                send_whatsapp_message.invoke({
-                    "user_id": lead.user_id,
-                    "message": response_msg
-                })
+            send_instagram_message.invoke({
+                "user_id": lead.user_id,
+                "message": response_msg
+            })
             
             # Add response to messages
             messages.append({

@@ -11,8 +11,8 @@ class Lead(BaseModel):
     for qualification, scheduling, and tracking.
     """
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    channel: str = Field(..., description="Channel: 'ig' or 'whatsapp'")
-    user_id: str = Field(..., description="Meta PSID or WhatsApp number")
+    channel: str = Field(..., description="Channel: 'ig'")
+    user_id: str = Field(..., description="Meta PSID")
     message: str = Field(..., description="Initial inquiry message")
     qualified_score: Optional[float] = Field(None, ge=0, le=1, description="Qualification score (0-1)")
     budget: Optional[int] = Field(None, description="Budget in USD (e.g., 300000)")

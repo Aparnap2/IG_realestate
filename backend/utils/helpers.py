@@ -1,6 +1,6 @@
 from datetime import datetime
-from ..models.lead import Lead
-from ..utils.supabase_client import save_lead
+from backend.models.lead import Lead
+from backend.utils.supabase_client import save_lead
 
 def update_lead_status(lead_id: str, status: str):
     """

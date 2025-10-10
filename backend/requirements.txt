@@ -21,3 +21,4 @@ cryptography>=3.4.8
 httpx>=0.24.0
 langchain-core>=0.1.0
 langchain-openai>=0.1.0
+pytz>=2023.3

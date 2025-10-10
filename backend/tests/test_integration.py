@@ -3,8 +3,6 @@ from unittest.mock import patch, MagicMock
 import sys
 import os
 
-# Add the parent directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from backend.models.lead import Lead
 from backend.agents.qualifier import qualifier_node
@@ -34,11 +32,12 @@ def sample_state(sample_lead):
         interrupt=False
     )
 
+@patch('backend.agents.qualifier.get_config', side_effect=lambda key, default: default)
 @patch('backend.agents.qualifier.query_properties_db')
 @patch('backend.agents.qualifier.get_llm_response')
 @patch('backend.agents.qualifier.cache_query_result')
 @patch('backend.agents.qualifier.save_lead')
-def test_qualifier_to_scheduler_flow(mock_save, mock_cache, mock_llm, mock_db, sample_state):
+def test_qualifier_to_scheduler_flow(mock_save, mock_cache, mock_llm, mock_db, mock_get_config, sample_state):
     """Test the flow from qualifier to scheduler agent"""
     # Mock the database response
     mock_db.return_value = [

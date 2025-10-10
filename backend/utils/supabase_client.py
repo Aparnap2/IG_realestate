@@ -1,12 +1,19 @@
 from supabase import create_client, Client
 import os
 from typing import List, Dict, Any
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 # Initialize Supabase client
-supabase: Client = create_client(
-    os.getenv("SUPABASE_URL"), 
-    os.getenv("SUPABASE_KEY")
-)
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_KEY")
+
+if not supabase_url or not supabase_key:
+    raise ValueError(f"Missing Supabase environment variables: URL={bool(supabase_url)}, KEY={bool(supabase_key)}")
+
+supabase: Client = create_client(supabase_url, supabase_key)
 
 def query_properties_db(budget: int, location: str, property_type: str) -> List[Dict[str, Any]]:
     """

@@ -33,7 +33,7 @@ def scheduler_node(state: AgentState) -> Dict[str, Any]:
     Returns:
         Updated state with meeting details and next agent
     """
-    lead = state["lead"]
+    lead = state["lead"].model_copy(deep=True)
     
     # Check if this is an interrupt for HITL review
     if state.get("interrupt"):
@@ -49,18 +49,37 @@ def scheduler_node(state: AgentState) -> Dict[str, Any]:
         selected_slot = available_slots[0]
         lead.meeting_slot = selected_slot
         
-        # Add scheduling message to the lead's history
+        timestamp = datetime.now().isoformat()
+        # Add scheduling intent to the lead's history
         lead.history.append({
             "message": f"Scheduling meeting for {selected_slot}",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": timestamp,
             "agent": "scheduler"
         })
         
         # Book the event in Google Calendar
         event_id = book_calendar_event(lead, selected_slot)
-        
-        # Log to HubSpot
-        log_to_hubspot(lead)
+
+        lead.history.append({
+            "message": f"Calendar booking {'confirmed' if event_id else 'pending'} (event_id={event_id or 'N/A'})",
+            "timestamp": datetime.now().isoformat(),
+            "agent": "scheduler"
+        })
+
+        # Trigger HubSpot logging and record the action regardless of mock side effects
+        lead.history.append({
+            "message": "HubSpot sync initiated for scheduled lead",
+            "timestamp": datetime.now().isoformat(),
+            "agent": "scheduler"
+        })
+        try:
+            log_to_hubspot(lead)
+        except Exception as hubspot_error:
+            lead.history.append({
+                "message": f"HubSpot sync failed: {hubspot_error}",
+                "timestamp": datetime.now().isoformat(),
+                "agent": "scheduler"
+            })
         
         # Save updated lead information
         save_lead(lead.model_dump())
@@ -71,6 +90,11 @@ def scheduler_node(state: AgentState) -> Dict[str, Any]:
         # If no slots available, end the conversation
         lead.history.append({
             "message": "No available time slots found",
+            "timestamp": datetime.now().isoformat(),
+            "agent": "scheduler"
+        })
+        lead.history.append({
+            "message": "Lead routed to end state due to scheduling unavailability",
             "timestamp": datetime.now().isoformat(),
             "agent": "scheduler"
         })

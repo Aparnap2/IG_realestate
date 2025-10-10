@@ -1,5 +1,5 @@
-from ..models.lead import Lead
-from ..tasks.lead_processing import process_lead_task
+from backend.models.lead import Lead
+from backend.tasks.lead_processing import process_lead
 
 def queue_lead_for_processing(lead: Lead):
     """
@@ -14,16 +14,6 @@ def queue_lead_for_processing(lead: Lead):
     # Convert Lead object to dictionary
     lead_data = lead.model_dump()
     
-    # Queue the task with retry policy
-    task = process_lead_task.apply_async(
-        args=[lead_data],
-        retry=True,
-        retry_policy={
-            'max_retries': 3,
-            'interval_start': 0,
-            'interval_step': 1,
-            'interval_max': 5,
-        }
-    )
-    
+    # Queue the task with retry policy using Celery options
+    task = process_lead.delay(lead_data)
     return task.id

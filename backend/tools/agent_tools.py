@@ -203,25 +203,7 @@ def send_instagram_message(user_id: str, message: str) -> bool:
         print(f"Error sending Instagram message: {e}")
         return False
 
-@tool
-def send_whatsapp_message(user_id: str, message: str) -> bool:
-    """
-    Send a message via WhatsApp Business API.
-    
-    Args:
-        user_id: WhatsApp user ID
-        message: Message to send
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        # TODO: Implement actual WhatsApp Business API integration
-        print(f"Sending WhatsApp message to {user_id}: {message}")
-        return True
-    except Exception as e:
-        print(f"Error sending WhatsApp message: {e}")
-        return False
+
 
 # Google Calendar Tools (Placeholder implementations)
 @tool
@@ -398,7 +380,6 @@ ALL_TOOLS = [
     get_config_tool,
     qualify_lead_with_llm,
     send_instagram_message,
-    send_whatsapp_message,
     get_available_calendar_slots,
     book_calendar_event,
     create_hubspot_contact,

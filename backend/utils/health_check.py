@@ -1,6 +1,6 @@
-from ..config.settings import Config
-from ..utils.supabase_client import supabase
-from ..utils.redis_client import redis_client
+from backend.config.settings import Config
+from backend.utils.supabase_client import supabase
+from backend.utils.redis_client import redis_client
 
 def validate_config():
     """
