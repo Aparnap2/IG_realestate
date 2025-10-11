@@ -72,6 +72,8 @@ class QualifierAgent:
                     lead.property_type = extracted_info["property_type"]
                 if extracted_info.get("timeline"):
                     lead.timeline = extracted_info["timeline"]
+                if extracted_info.get("desired_bedrooms"):
+                    lead.desired_bedrooms = extracted_info["desired_bedrooms"]
             
             # Query properties database
             db_results = []
@@ -82,25 +84,49 @@ class QualifierAgent:
                     "property_type": lead.property_type
                 })
             
-            # Qualify lead using LLM
-            qualification_result = qualify_lead_with_llm.invoke({
+            # Handle budget reconciliation if needed
+            reconciliation_result = None
+            if hasattr(lead, 'desired_bedrooms') and lead.desired_bedrooms and lead.budget and db_results:
+                from tools.qualifier_utils import reconcile_budget_mismatch
+                reconciliation_result = reconcile_budget_mismatch(
+                    desired_bedrooms=lead.desired_bedrooms,
+                    budget=lead.budget,
+                    inventory=db_results,
+                    location=lead.location
+                )
+            
+            # Qualify lead using LLM with enhanced context
+            qualification_context = {
                 "budget": lead.budget,
                 "location": lead.location,
                 "property_type": lead.property_type,
                 "timeline": lead.timeline,
-                "db_results": db_results
-            })
+                "db_results": db_results,
+                "reconciliation": reconciliation_result
+            }
             
-            # Update lead with qualification results
-            lead.qualified_score = qualification_result["score"]
-            lead.add_history_entry(
-                f"Lead qualified with score: {qualification_result['score']}",
-                "qualifier",
-                qualification_result["reasoning"]
+            qualification_result = qualify_lead_with_llm.invoke(qualification_context)
+            
+            # Apply temporal adjustments to score
+            from tools.qualifier_utils import calculate_temporal_qualification_adjustments
+            temporal_adjustments = calculate_temporal_qualification_adjustments(
+                lead_data=lead.to_dict(),
+                base_score=qualification_result["score"]
             )
             
-            # Generate response message
-            if not all([lead.budget, lead.location, lead.property_type]):
+            # Update lead with enhanced qualification results
+            lead.qualified_score = temporal_adjustments["adjusted_score"]
+            lead.add_history_entry(
+                f"Lead qualified with score: {temporal_adjustments['adjusted_score']:.2f} (base: {qualification_result['score']:.2f})",
+                "qualifier",
+                f"{qualification_result['reasoning']} | {temporal_adjustments['reasoning']}"
+            )
+            
+            # Generate contextual response message
+            if reconciliation_result and not reconciliation_result["has_exact_match"]:
+                # Use reconciliation message
+                response_msg = reconciliation_result["message"]
+            elif not all([lead.budget, lead.location, lead.property_type]):
                 # Ask for missing information
                 response_msg = generate_response_message(
                     lead.to_dict(),
@@ -109,16 +135,28 @@ class QualifierAgent:
                 )
             else:
                 # Provide qualification feedback
-                if qualification_result["score"] > 0.7:
-                    response_msg = f"Great! Based on your criteria, I found {len(db_results)} properties that might interest you. Let me connect you with our scheduler to arrange a viewing."
+                if temporal_adjustments["adjusted_score"] > 0.7:
+                    response_msg = f"Excellent! Based on your criteria, I found {len(db_results)} properties that could be perfect for you. Let me connect you with our scheduler to arrange viewings."
                 else:
-                    response_msg = f"Thank you for your interest! I found {len(db_results)} properties in your area. Let me share some options with you."
+                    response_msg = f"Thank you for your interest! I found {len(db_results)} properties in your area. Let me share some options that might work for you."
             
-            # Send response
-            send_instagram_message.invoke({
-                "user_id": lead.user_id,
-                "message": response_msg
-            })
+            # Send response with compliance check
+            from tools.compliance import fair_housing_evaluator
+            import asyncio
+            compliance_check = asyncio.run(fair_housing_evaluator(response_msg, {"lead_id": lead.user_id}))
+            
+            if compliance_check["passed"]:
+                send_instagram_message.invoke({
+                    "user_id": lead.user_id,
+                    "message": response_msg
+                })
+            else:
+                # Use neutral alternative
+                send_instagram_message.invoke({
+                    "user_id": lead.user_id,
+                    "message": compliance_check["suggested_replacement"]
+                })
+                response_msg = compliance_check["suggested_replacement"]
             
             # Add response to messages
             messages.append({
@@ -130,18 +168,20 @@ class QualifierAgent:
             next_agent = "followup"
             interrupt = False
             
-            # Check for HITL conditions
-            if lead.is_high_value():
+            # Check for HITL conditions (enhanced)
+            if lead.is_high_value() or temporal_adjustments["adjusted_score"] > 0.9:
                 next_agent = "scheduler"
                 interrupt = True
-                lead.add_history_entry("Flagged for HITL review - high value lead", "qualifier")
-            elif lead.should_schedule():
+                lead.add_history_entry("Flagged for HITL review - high value/score lead", "qualifier")
+            elif lead.should_schedule() or temporal_adjustments["adjusted_score"] > 0.7:
                 next_agent = "scheduler"
             
             return {
                 "lead": lead,
                 "messages": messages,
                 "db_results": db_results,
+                "reconciliation_result": reconciliation_result,
+                "temporal_adjustments": temporal_adjustments,
                 "next_agent": next_agent,
                 "interrupt": interrupt
             }
@@ -297,9 +337,34 @@ class FollowUpAgent:
         db_results = state.get("db_results", [])
         
         try:
-            # Generate follow-up message
-            if db_results:
-                # Share property suggestions
+            # Generate intelligent nurture action
+            from tools.nurture import generate_nurture_action
+            from temporal.graph_client import get_graphiti_client
+            
+            # Get temporal context
+            temporal_graph = get_graphiti_client()
+            
+            # Generate contextual nurture action
+            nurture_action = generate_nurture_action(lead.to_dict(), temporal_graph)
+            
+            # Use nurture message or fallback to property suggestions
+            if nurture_action and nurture_action.get("message"):
+                response_msg = nurture_action["message"]
+                
+                # Record nurture action in temporal graph
+                import asyncio
+                asyncio.run(temporal_graph.record_lead_event(
+                    lead_id=lead.user_id,
+                    event_type="nurture_action",
+                    event_data={
+                        "action_type": nurture_action.get("type"),
+                        "priority": nurture_action.get("priority"),
+                        "reasoning": nurture_action.get("reasoning")
+                    }
+                ))
+                
+            elif db_results:
+                # Fallback: Share property suggestions
                 property_suggestions = []
                 for prop in db_results[:2]:  # Limit to 2 properties
                     property_suggestions.append(
@@ -315,21 +380,38 @@ class FollowUpAgent:
                     "followup"
                 )
             
-            # Send response
-            send_instagram_message.invoke({
-                "user_id": lead.user_id,
-                "message": response_msg
-            })
+            # Send response with compliance check
+            from tools.compliance import fair_housing_evaluator
+            import asyncio
+            compliance_check = asyncio.run(fair_housing_evaluator(response_msg, {"lead_id": lead.user_id}))
+            
+            if compliance_check["passed"]:
+                send_instagram_message.invoke({
+                    "user_id": lead.user_id,
+                    "message": response_msg
+                })
+            else:
+                # Use neutral alternative
+                send_instagram_message.invoke({
+                    "user_id": lead.user_id,
+                    "message": compliance_check["suggested_replacement"]
+                })
+                response_msg = compliance_check["suggested_replacement"]
             
             # Add response to messages
             messages.append({
                 "role": "assistant",
-                "content": response_msg
+                "content": response_msg,
+                "metadata": {
+                    "agent": "followup",
+                    "nurture_action": nurture_action.get("type") if 'nurture_action' in locals() else None,
+                    "compliance_passed": compliance_check["passed"]
+                }
             })
             
             # Update lead status
             lead.status = "nurtured"
-            lead.add_history_entry("Follow-up message sent", "followup")
+            lead.add_history_entry("Intelligent follow-up message sent", "followup")
             
             # Save lead
             save_lead_tool.invoke({"lead_data": lead.to_dict()})

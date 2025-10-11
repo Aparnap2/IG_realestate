@@ -6,6 +6,7 @@ automation platform supporting multiple companies and industries.
 """
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 import uvicorn
 import sys
 import os
@@ -86,7 +87,8 @@ app = FastAPI(
     description="Dynamic workflow automation platform supporting multiple companies and industries",
     version="2.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    redirect_slashes=False
 )
 
 # Add CORS middleware
@@ -112,8 +114,18 @@ app.include_router(health_router, prefix="/api")
 app.include_router(companies_router)
 
 @app.get("/")
-async def root():
-    """Root endpoint with system information"""
+async def root(request: Request):
+    """Root endpoint with system information and webhook verification"""
+    # Check if this is a webhook verification request
+    hub_mode = request.query_params.get("hub.mode")
+    hub_verify_token = request.query_params.get("hub.verify_token")
+    hub_challenge = request.query_params.get("hub.challenge")
+
+    # Handle Instagram webhook verification
+    if hub_mode == "subscribe" and hub_verify_token == "aaa_real_estate_verify_token_2025":
+        return PlainTextResponse(content=hub_challenge or "", status_code=200)
+
+    # Otherwise return normal platform info
     return {
         "message": "Multi-Tenant Automation Platform",
         "version": "2.0.0",
@@ -127,7 +139,7 @@ async def root():
         ],
         "endpoints": {
             "webhooks": "/webhook/{integration_type}",
-            "processing": "/processing", 
+            "processing": "/processing",
             "hitl": "/hitl",
             "health": "/api/health",
             "companies": "/api/companies",

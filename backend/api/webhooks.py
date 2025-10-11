@@ -42,7 +42,7 @@ except ImportError:
     
     metrics_collector = MockMetricsCollector()
 
-app = FastAPI()
+app = FastAPI(redirect_slashes=False)
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -65,17 +65,33 @@ class InstagramWebhookEntry(BaseModel):
 
 
 
+@app.get("/")
+@app.get("")
+async def webhook_verification(
+    request: Request
+):
+    """
+    Handle webhook verification for Meta APIs.
+
+    This endpoint handles the initial webhook verification process
+    required by Meta APIs.
+    """
+    hub_mode = request.query_params.get("hub.mode")
+    hub_verify_token = request.query_params.get("hub.verify_token")
+    hub_challenge = request.query_params.get("hub.challenge")
+
+    logger.info(f"Webhook verification request: mode={hub_mode}, token={hub_verify_token}")
+
+    if (hub_mode == "subscribe" and
+        hub_verify_token == META_VERIFY_TOKEN and
+        hub_challenge):
+        logger.info("Webhook verification successful")
+        return PlainTextResponse(content=str(hub_challenge), status_code=200)
+
+    logger.warning("Webhook verification failed")
+    raise HTTPException(status_code=403, detail="Verification failed")
+
 def verify_meta_signature(payload: bytes, signature: str) -> bool:
-    """
-    Verify the signature of a Meta webhook request.
-    
-    Args:
-        payload: Raw request payload
-        signature: X-Hub-Signature-256 header value
-        
-    Returns:
-        True if signature is valid, False otherwise
-    """
     if not signature or not META_APP_SECRET:
         logger.warning("Missing signature or app secret")
         return False
@@ -99,30 +115,8 @@ def verify_meta_signature(payload: bytes, signature: str) -> bool:
         logger.error(f"Error verifying signature: {e}")
         return False
 
-@app.get("/webhook")
-async def webhook_verification(
-    hub_mode: Optional[str] = None,
-    hub_challenge: Optional[str] = None,
-    hub_verify_token: Optional[str] = None
-):
-    """
-    Handle webhook verification for Meta APIs.
-    
-    This endpoint handles the initial webhook verification process
-    required by Meta APIs.
-    """
-    logger.info(f"Webhook verification request: mode={hub_mode}, token={hub_verify_token}")
-    
-    if (hub_mode == "subscribe" and 
-        hub_verify_token == META_VERIFY_TOKEN and 
-        hub_challenge):
-        logger.info("Webhook verification successful")
-        return PlainTextResponse(content=str(hub_challenge), status_code=200)
-    
-    logger.warning("Webhook verification failed")
-    raise HTTPException(status_code=403, detail="Verification failed")
-
-@app.post("/webhook")
+@app.post("/")
+@app.post("")
 @track_performance
 async def instagram_webhook(
     request: Request,
@@ -210,7 +204,7 @@ async def instagram_webhook(
         metrics_collector.increment_counter("instagram_webhook_errors")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get("/webhook/health")
+@app.get("/health")
 async def webhook_health():
     """Health check endpoint for webhooks"""
     try:
@@ -230,7 +224,7 @@ async def webhook_health():
         }
 
 # Test endpoint for development
-@app.post("/webhook/test")
+@app.post("/test")
 async def test_webhook(test_data: Dict[str, Any]):
     """
     Test endpoint for webhook processing during development.

@@ -16,7 +16,7 @@ class Config:
     
     # OpenRouter configuration
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-    
+    LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-20b:free")  
     # Meta API configuration
     META_APP_ID = os.getenv("META_APP_ID")
     META_APP_SECRET = os.getenv("META_APP_SECRET")

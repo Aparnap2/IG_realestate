@@ -182,7 +182,7 @@ Provide your response as a JSON object with the following structure:
             "reasoning": f"Error occurred: {str(e)}"
         }
 
-# Meta API Tools (Placeholder implementations)
+# Instagram Graph API Integration
 @tool
 def send_instagram_message(user_id: str, message: str) -> bool:
     """
@@ -196,40 +196,80 @@ def send_instagram_message(user_id: str, message: str) -> bool:
         True if successful, False otherwise
     """
     try:
-        # TODO: Implement actual Instagram Graph API integration
-        print(f"Sending Instagram message to {user_id}: {message}")
-        return True
+        from config import get_settings
+        settings = get_settings()
+        
+        if not settings.ENABLE_REAL_INSTAGRAM_API:
+            # Mock implementation for development
+            print(f"[MOCK] Sending Instagram message to {user_id}: {message}")
+            return True
+        
+        import requests
+        
+        url = "https://graph.facebook.com/v21.0/me/messages"
+        
+        payload = {
+            "recipient": {"id": user_id},
+            "message": {"text": message}
+        }
+        
+        headers = {
+            "Authorization": f"Bearer {settings.INSTAGRAM_PAGE_ACCESS_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            # Log successful send
+            from utils.audit import audit_log_event
+            audit_log_event("instagram_message_sent", {
+                "user_id": user_id,
+                "message_length": len(message),
+                "response_id": response.json().get("message_id")
+            })
+            return True
+        else:
+            # Log failure
+            from utils.audit import audit_log_event
+            audit_log_event("instagram_message_failed", {
+                "user_id": user_id,
+                "status_code": response.status_code,
+                "error": response.text
+            })
+            return False
+            
     except Exception as e:
         print(f"Error sending Instagram message: {e}")
+        from utils.audit import audit_log_event
+        audit_log_event("instagram_message_error", {
+            "user_id": user_id,
+            "error": str(e)
+        })
         return False
 
 
 
-# Google Calendar Tools (Placeholder implementations)
+# Google Calendar Tools (Real Implementation)
 @tool
-def get_available_calendar_slots(days_ahead: int = 7) -> List[datetime]:
+def get_available_calendar_slots(days_ahead: int = 7, time_of_day: str = "any") -> List[datetime]:
     """
     Get available calendar slots from Google Calendar.
     
     Args:
         days_ahead: Number of days to look ahead
+        time_of_day: Preferred time ("morning", "afternoon", "evening", "any")
         
     Returns:
         List of available datetime slots
     """
     try:
-        # TODO: Implement actual Google Calendar API integration
-        # For now, return dummy slots
-        now = datetime.now()
-        slots = []
-        for i in range(1, days_ahead + 1):
-            # Add slots at 10 AM, 2 PM, and 4 PM each day
-            for hour in [10, 14, 16]:
-                slot = now.replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=i)
-                slots.append(slot)
-        return slots
+        from tools.calendar_integration import get_available_calendar_slots as get_slots
+        return get_slots(days_ahead=days_ahead, time_of_day=time_of_day)
     except Exception as e:
         print(f"Error getting calendar slots: {e}")
+        from utils.audit import audit_log_event
+        audit_log_event("calendar_slots_error", {"error": str(e)})
         return []
 
 @tool
@@ -238,10 +278,11 @@ def book_calendar_event(
     duration_minutes: int,
     attendee_email: str,
     summary: str,
-    description: str = ""
+    description: str = "",
+    property_addresses: List[str] = None
 ) -> Dict[str, Any]:
     """
-    Book a calendar event via Google Calendar API.
+    Book a calendar event via Google Calendar API with Google Meet link.
     
     Args:
         start_time: Event start time
@@ -249,24 +290,29 @@ def book_calendar_event(
         attendee_email: Attendee's email
         summary: Event summary
         description: Event description
+        property_addresses: List of property addresses for tour
         
     Returns:
         Dictionary with event details or error
     """
     try:
-        # TODO: Implement actual Google Calendar API integration
-        event_id = f"event_{int(start_time.timestamp())}"
-        print(f"Booking calendar event: {summary} at {start_time} for {attendee_email}")
-        
-        return {
-            "event_id": event_id,
-            "start_time": start_time.isoformat(),
-            "attendee_email": attendee_email,
-            "summary": summary,
-            "status": "booked"
-        }
+        from tools.calendar_integration import create_tour_event
+        return create_tour_event(
+            start_time=start_time,
+            duration_minutes=duration_minutes,
+            attendee_email=attendee_email,
+            summary=summary,
+            description=description,
+            property_addresses=property_addresses or []
+        )
     except Exception as e:
         print(f"Error booking calendar event: {e}")
+        from utils.audit import audit_log_event
+        audit_log_event("calendar_booking_error", {
+            "error": str(e),
+            "start_time": start_time.isoformat(),
+            "attendee_email": attendee_email
+        })
         return {"error": str(e)}
 
 # HubSpot Tools (Placeholder implementations)

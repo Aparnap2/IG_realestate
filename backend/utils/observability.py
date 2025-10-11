@@ -1,5 +1,6 @@
 import time
 import logging
+import inspect
 from typing import Callable, Any
 from functools import wraps
 
@@ -57,11 +58,29 @@ metrics_collector = MetricsCollector()
 
 def track_performance(func: Callable) -> Callable:
     """Decorator to track performance metrics of functions"""
+    if inspect.iscoroutinefunction(func):
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs) -> Any:
+            start_time = time.time()
+            success = True
+            try:
+                result = await func(*args, **kwargs)
+                return result
+            except Exception as e:
+                success = False
+                raise e
+            finally:
+                end_time = time.time()
+                response_time = end_time - start_time
+                metrics_collector.record_request(response_time, success)
+
+        return async_wrapper
+
     @wraps(func)
-    def wrapper(*args, **kwargs) -> Any:
+    def sync_wrapper(*args, **kwargs) -> Any:
         start_time = time.time()
         success = True
-        
+
         try:
             result = func(*args, **kwargs)
             return result
@@ -72,8 +91,8 @@ def track_performance(func: Callable) -> Callable:
             end_time = time.time()
             response_time = end_time - start_time
             metrics_collector.record_request(response_time, success)
-            
-    return wrapper
+
+    return sync_wrapper
 
 # Example usage:
 # @track_performance

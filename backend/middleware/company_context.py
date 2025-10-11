@@ -14,8 +14,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-        from utils.supabase_client import supabase
-    except ImportError:
+    from utils.supabase_client import supabase
+except ImportError:
         # Fallback for testing
         class MockSupabase:
             def table(self, name):
@@ -275,12 +275,12 @@ class CompanyContextMiddleware:
     def __init__(self, app):
         self.app = app
     
-async def __call__(self, scope, receive, send):
+    async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
             # Add company context to scope if available
             request = Request(scope, receive)
             
-# Skip company context for webhook endpoints to avoid database errors - FIXED
+            # Skip company context for webhook endpoints to avoid database errors - FIXED
             if "/webhook" in request.url.path:
                 logger.info(f"Skipping company context for webhook endpoint: {request.url.path}")
                 await self.app(scope, receive, send)

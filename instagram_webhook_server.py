@@ -104,13 +104,14 @@ async def verify_instagram_webhook(request: Request):
         print(f"   Challenge: {challenge}")
         
         if mode == "subscribe" and token == VERIFY_TOKEN:
-            print("✅ Webhook verification successful!")
-            return int(challenge)  # Must return challenge as integer
+            print("✅ Instagram webhook verification successful!")
+            return int(challenge)  # Must return challenge as integer for Instagram API
         else:
-            print("❌ Webhook verification failed!")
+            print("❌ Instagram webhook verification failed!")
             print(f"   Expected token: {VERIFY_TOKEN}")
             print(f"   Received token: {token}")
-            raise HTTPException(status_code=403, detail="Verification failed")
+            print(f"   Mode: {mode}")
+            raise HTTPException(status_code=403, detail="Instagram webhook verification failed")
             
     except Exception as e:
         print(f"❌ Webhook verification error: {e}")
@@ -135,21 +136,21 @@ async def receive_instagram_webhook(request: Request):
             print(f"⚠️  Not an Instagram event: {body.get('object')}")
             return {"status": "ignored", "reason": "not_instagram_event"}
         
-        # Process each entry
+        # Process Instagram messaging events specifically
         processed_leads = []
         
         for entry in body.get("entry", []):
             for messaging_event in entry.get("messaging", []):
                 sender_id = messaging_event["sender"]["id"]
                 
-                print(f"👤 Processing message from sender: {sender_id}")
+                print(f"👤 Processing Instagram message from sender: {sender_id}")
                 
                 # Check if it's a message (not postback, delivery, etc.)
                 if messaging_event.get("message"):
                     message_text = messaging_event["message"].get("text", "")
                     
                     if message_text:  # Only process text messages
-                        print(f"💬 Message: {message_text}")
+                        print(f"💬 Instagram Message: {message_text}")
                         
                         # Process through our production lead processor
                         result = await process_lead_message(sender_id, message_text, "ig")
@@ -162,7 +163,7 @@ async def receive_instagram_webhook(request: Request):
                             print(f"   Properties Found: {result['properties_found']}")
                             print(f"   HITL Needed: {result['interrupt_needed']}")
                             
-                            # Send auto-reply via Instagram
+                            # Send auto-reply via Instagram Send API
                             await send_instagram_message(sender_id, result['response_message'])
                             
                             processed_leads.append({
@@ -187,7 +188,8 @@ async def receive_instagram_webhook(request: Request):
             "status": "success",
             "processed_leads": len(processed_leads),
             "leads": processed_leads,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "object": body.get("object")  # Confirm it's Instagram
         }
         
     except Exception as e:
@@ -202,6 +204,46 @@ async def receive_instagram_webhook(request: Request):
             "timestamp": datetime.now().isoformat()
         }
 
+async def process_instagram_webhook_async(body: dict):
+    """
+    Process Instagram webhook events asynchronously.
+    
+    This ensures we return 200 OK immediately to Meta while processing
+    the events in the background to avoid webhook timeouts.
+    """
+    try:
+        # Process Instagram messaging events specifically
+        processed_leads = []
+        
+        for entry in body.get("entry", []):
+            for messaging_event in entry.get("messaging", []):
+                sender_id = messaging_event["sender"]["id"]
+                
+                # Check if it's a message (not postback, delivery, etc.)
+                if messaging_event.get("message"):
+                    message_text = messaging_event["message"].get("text", "")
+                    
+                    if message_text:  # Only process text messages
+                        # Process through our production lead processor
+                        result = await process_lead_message(sender_id, message_text, "ig")
+                        
+                        if result["status"] == "success":
+                            # Send auto-reply via Instagram Send API
+                            await send_instagram_message(sender_id, result['response_message'])
+                            
+                            processed_leads.append({
+                                "sender_id": sender_id,
+                                "lead_id": result['lead_id'],
+                                "qualified_score": result['qualified_score'],
+                                "next_agent": result['next_agent']
+                            })
+        
+        print(f"✅ Async processing completed for {len(processed_leads)} leads")
+        
+    except Exception as e:
+        print(f"❌ Async webhook processing error: {e}")
+        import traceback
+        traceback.print_exc()
 async def send_instagram_message(recipient_id: str, message_text: str):
     """
     Send a message via Instagram Messaging API.
@@ -223,7 +265,8 @@ async def send_instagram_message(recipient_id: str, message_text: str):
         
         data = {
             "recipient": {"id": recipient_id},
-            "message": {"text": message_text}
+            "message": {"text": message_text},
+            "messaging_type": "RESPONSE"  # Required for Instagram business messaging compliance
         }
         
         async with aiohttp.ClientSession() as session:
@@ -234,7 +277,20 @@ async def send_instagram_message(recipient_id: str, message_text: str):
                     return True
                 else:
                     error_text = await response.text()
-                    print(f"❌ Failed to send message: {response.status} - {error_text}")
+                    error_data = await response.json() if response.headers.get('content-type', '').startswith('application/json') else {}
+                    
+                    print(f"❌ Failed to send Instagram message: {response.status} - {error_text}")
+                    
+                    # Handle specific Instagram API errors
+                    if response.status == 400:
+                        error_code = error_data.get('error', {}).get('code', 0)
+                        if error_code == 613:  # Calls to this API have exceeded the rate limit
+                            print("⚠️  Instagram API rate limit exceeded")
+                        elif error_code == 100:  # Invalid parameter
+                            print("⚠️  Invalid parameter in Instagram API request")
+                        elif error_code == 200:  # Permissions error
+                            print("⚠️  Missing permissions for Instagram API")
+                    
                     return False
                     
     except Exception as e:

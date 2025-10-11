@@ -1,1 +1,1 @@
-# Empty init file
+# Test package initialization

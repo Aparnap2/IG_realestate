@@ -20,7 +20,7 @@ def create_database_schema():
     supabase = create_client(supabase_url, supabase_key)
     
     try:
-        # Create leads table
+        # Create leads table with compliance fields
         leads_sql = """
         CREATE TABLE IF NOT EXISTS leads (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -37,6 +37,18 @@ def create_database_schema():
             meeting_slot TIMESTAMP WITH TIME ZONE,
             status VARCHAR DEFAULT 'new' CHECK (status IN ('new', 'qualified', 'scheduled', 'booked')),
             history JSONB DEFAULT '[]'::jsonb,
+            -- Compliance fields (PRD Section 2.6)
+            gdpr_consent BOOLEAN DEFAULT FALSE,
+            tcpa_opt_in BOOLEAN DEFAULT FALSE,
+            consent_timestamp TIMESTAMP WITH TIME ZONE,
+            consent_method VARCHAR,
+            consent_ip VARCHAR,
+            -- Engagement tracking (PRD Section 2.2)
+            engagement_score FLOAT DEFAULT 0.0,
+            engagement_trajectory VARCHAR DEFAULT 'stable' CHECK (engagement_trajectory IN ('escalating', 'cooling', 'stable')),
+            last_interaction_at TIMESTAMP WITH TIME ZONE,
+            -- Temporal context
+            prior_interests JSONB DEFAULT '[]'::jsonb,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         );
         """
@@ -64,6 +76,42 @@ def create_database_schema():
         );
         """
         
+        # Create audit_logs table (PRD Section 2.6: Immutable Audit Trail)
+        audit_logs_sql = """
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            event_type VARCHAR NOT NULL,
+            entity_type VARCHAR NOT NULL DEFAULT 'system',
+            entity_id VARCHAR NOT NULL,
+            agent_type VARCHAR,
+            payload JSONB NOT NULL,
+            correlation_id UUID,
+            timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            hash VARCHAR NOT NULL,
+            prev_hash VARCHAR,
+            -- Compliance tracking
+            policy_checks JSONB DEFAULT '{}'::jsonb,
+            human_reviewed BOOLEAN DEFAULT FALSE,
+            reviewed_by VARCHAR,
+            reviewed_at TIMESTAMP WITH TIME ZONE,
+            -- Indexing for performance
+            CONSTRAINT audit_logs_hash_unique UNIQUE (hash)
+        );
+        """
+        
+        # Create system_errors table for audit system failures
+        system_errors_sql = """
+        CREATE TABLE IF NOT EXISTS system_errors (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            failed_event_type VARCHAR,
+            failed_payload JSONB,
+            error TEXT NOT NULL,
+            system VARCHAR NOT NULL,
+            resolved BOOLEAN DEFAULT FALSE
+        );
+        """
+        
         # Execute table creation
         print("Creating leads table...")
         supabase.rpc("exec_sql", {"sql": leads_sql}).execute()
@@ -74,11 +122,36 @@ def create_database_schema():
         print("Creating configs table...")
         supabase.rpc("exec_sql", {"sql": configs_sql}).execute()
         
+        print("Creating audit_logs table...")
+        supabase.rpc("exec_sql", {"sql": audit_logs_sql}).execute()
+        
+        print("Creating system_errors table...")
+        supabase.rpc("exec_sql", {"sql": system_errors_sql}).execute()
+        
         # Enable RLS
         print("Enabling RLS on tables...")
         supabase.rpc("exec_sql", {"sql": "ALTER TABLE leads ENABLE ROW LEVEL SECURITY;"}).execute()
         supabase.rpc("exec_sql", {"sql": "ALTER TABLE properties ENABLE ROW LEVEL SECURITY;"}).execute()
         supabase.rpc("exec_sql", {"sql": "ALTER TABLE configs ENABLE ROW LEVEL SECURITY;"}).execute()
+        supabase.rpc("exec_sql", {"sql": "ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;"}).execute()
+        supabase.rpc("exec_sql", {"sql": "ALTER TABLE system_errors ENABLE ROW LEVEL SECURITY;"}).execute()
+        
+        # Create indexes for performance
+        print("Creating database indexes...")
+        indexes_sql = [
+            "CREATE INDEX IF NOT EXISTS idx_audit_logs_event_type ON audit_logs(event_type);",
+            "CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_id ON audit_logs(entity_id);",
+            "CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);",
+            "CREATE INDEX IF NOT EXISTS idx_audit_logs_correlation_id ON audit_logs(correlation_id);",
+            "CREATE INDEX IF NOT EXISTS idx_leads_user_id ON leads(user_id);",
+            "CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);",
+            "CREATE INDEX IF NOT EXISTS idx_leads_engagement_score ON leads(engagement_score);",
+            "CREATE INDEX IF NOT EXISTS idx_properties_price ON properties(price);",
+            "CREATE INDEX IF NOT EXISTS idx_properties_location ON properties(location);",
+        ]
+        
+        for index_sql in indexes_sql:
+            supabase.rpc("exec_sql", {"sql": index_sql}).execute()
         
         # Create RLS policies for leads
         leads_policies = [
