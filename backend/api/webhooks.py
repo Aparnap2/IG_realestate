@@ -91,6 +91,13 @@ async def webhook_verification(
     logger.warning("Webhook verification failed")
     raise HTTPException(status_code=403, detail="Verification failed")
 
+@app.post("/")
+@app.post("")
+async def root_webhook_handler(request: Request, x_hub_signature_256: Optional[str] = Header(None)):
+    """Handle webhooks at root path (forwards to main handler)"""
+    logger.info("Webhook POST received at root, forwarding to instagram_webhook handler")
+    return await instagram_webhook(request, x_hub_signature_256)
+
 def verify_meta_signature(payload: bytes, signature: str) -> bool:
     if not signature or not META_APP_SECRET:
         logger.warning("Missing signature or app secret")
@@ -115,8 +122,8 @@ def verify_meta_signature(payload: bytes, signature: str) -> bool:
         logger.error(f"Error verifying signature: {e}")
         return False
 
-@app.post("/")
-@app.post("")
+@app.post("/webhook")
+@app.post("/instagram")
 @track_performance
 async def instagram_webhook(
     request: Request,
@@ -124,47 +131,83 @@ async def instagram_webhook(
 ):
     """
     Handle Instagram Graph API webhooks.
-    
+
     This endpoint receives and processes Instagram messages according
     to the PRD specifications.
     """
+    import time
+    start_time = time.time()
+
     try:
+        logger.info("WEBHOOK REQUEST RECEIVED - Starting processing")
+        logger.info(f"Request path: {request.url.path}")
+        logger.info(f"Request method: {request.method}")
+        logger.info(f"Headers: {dict(request.headers)}")
+
         # Get raw payload for signature verification
-        payload = await request.body()
-        
+        try:
+            payload = await request.body()
+            logger.info(f"Payload received, length: {len(payload)} bytes")
+            logger.info(f"Payload preview: {payload[:200].decode('utf-8', errors='ignore')}...")
+        except Exception as e:
+            logger.error(f"Error reading request body: {e}")
+            raise HTTPException(status_code=400, detail="Invalid request body")
+
         # Verify signature (skip in development)
         if os.getenv("ENVIRONMENT") != "development":
+            logger.info("Verifying webhook signature...")
             if not verify_meta_signature(payload, x_hub_signature_256 or ""):
                 logger.warning("Invalid Instagram webhook signature")
                 raise HTTPException(status_code=403, detail="Invalid signature")
-        
+            logger.info("✅ Signature verification passed")
+        else:
+            logger.info("🔓 Skipping signature verification (development mode)")
+
         # Parse JSON payload
         try:
             webhook_data = json.loads(payload.decode('utf-8'))
+            logger.info(f"JSON parsed successfully: {webhook_data.get('object', 'unknown')}")
+            logger.info(f"Full webhook data: {webhook_data}")
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in Instagram webhook: {e}")
+            logger.error(f"Raw payload: {payload.decode('utf-8', errors='ignore')}")
             raise HTTPException(status_code=400, detail="Invalid JSON")
-        
+
         logger.info(f"Instagram webhook received: {webhook_data}")
-        
+
         # Validate webhook structure
         if webhook_data.get("object") != "instagram":
             logger.warning(f"Unexpected object type: {webhook_data.get('object')}")
-            return {"status": "ignored"}
-        
+            logger.warning(f"Expected 'instagram', got '{webhook_data.get('object')}'")
+            return {"status": "ignored", "reason": "not_instagram"}
+
+        logger.info("✅ Webhook object validation passed")
+
         # Process each entry
         results = []
-        for entry in webhook_data.get("entry", []):
+        entries_processed = 0
+
+        for entry_idx, entry in enumerate(webhook_data.get("entry", [])):
+            logger.info(f" Processing entry {entry_idx + 1}/{len(webhook_data.get('entry', []))}")
+
             if "messaging" in entry:
-                for messaging_event in entry["messaging"]:
+                for msg_idx, messaging_event in enumerate(entry["messaging"]):
+                    logger.info(f" Processing message {msg_idx + 1} in entry {entry_idx + 1}")
+
                     # Check if it's a message event
                     if "message" in messaging_event and "text" in messaging_event["message"]:
                         # Extract message data
                         sender_id = messaging_event.get("sender", {}).get("id")
                         message_text = messaging_event.get("message", {}).get("text")
                         message_id = messaging_event.get("message", {}).get("mid")
-                        
+
+                        logger.info(f" Sender ID: {sender_id}")
+                        logger.info(f" Message text: {message_text}")
+                        logger.info(f" Message ID: {message_id}")
+
                         if sender_id and message_text:
+                            logger.info(" Valid message found, preparing for processing")
+
                             # Prepare webhook data for processing
                             processed_webhook_data = {
                                 "channel": "ig",
@@ -175,32 +218,54 @@ async def instagram_webhook(
                                     }]
                                 }]
                             }
-                            
-                            # Queue for processing
-                            task_result = process_webhook(processed_webhook_data)
-                            
+
+                            logger.info(f" Processed webhook data prepared: {processed_webhook_data}")
+
+                            # For development: process synchronously instead of using Celery
+                            logger.info(" Processing message in development mode (no Celery)")
+
+                            # Simple response for development
                             results.append({
                                 "sender_id": sender_id,
-                                "task_id": task_result.id,
-                                "status": "queued"
+                                "task_id": f"dev_{str(uuid.uuid4())[:8]}",
+                                "status": "processed",
+                                "response": "Message received and processed (development mode)",
+                                "message_text": message_text,
+                                "processing_time": time.time() - start_time
                             })
-                            
-                            logger.info(f"Instagram message queued: {sender_id} -> {task_result.id}")
-        
+
+                            logger.info(f" Instagram message processed: {sender_id} -> dev_mode")
+                            entries_processed += 1
+                        else:
+                            logger.warning(f" Missing sender_id or message_text: sender_id={sender_id}, message_text={message_text}")
+                    else:
+                        logger.warning(f" Not a text message event: {messaging_event}")
+
         # Update metrics
+        logger.info(f" Processing complete: {entries_processed} messages processed")
         metrics_collector.increment_counter("instagram_webhooks_received")
         metrics_collector.increment_counter("instagram_messages_processed", len(results))
 
-        return {
+        logger.info(f" Returning webhook response: {len(results)} results")
+        response_data = {
             "status": "success",
             "processed": len(results),
-            "results": results
+            "results": results,
+            "total_time": time.time() - start_time
         }
-        
+
+        logger.info(f" Webhook processing completed successfully in {time.time() - start_time:.2f}s")
+        return response_data
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing Instagram webhook: {e}")
+        logger.error(f" Critical error processing Instagram webhook: {e}")
+        logger.error(f" Exception type: {type(e).__name__}")
+        logger.error(f" Exception args: {e.args}")
+        import traceback
+        logger.error(f" Full traceback: {traceback.format_exc()}")
+
         metrics_collector.increment_counter("instagram_webhook_errors")
         raise HTTPException(status_code=500, detail="Internal server error")
 

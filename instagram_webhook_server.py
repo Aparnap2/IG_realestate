@@ -51,15 +51,37 @@ print(f"   Verify Token: {'✅ Set' if VERIFY_TOKEN else '❌ Missing'}")
 print(f"   Page Access Token: {'✅ Set' if PAGE_ACCESS_TOKEN else '❌ Missing'}")
 
 @app.get("/")
-async def root():
-    """Root endpoint with system information"""
+async def root(request: Request):
+    """Root endpoint - handles both info requests and webhook verification"""
+    # Check if this is a webhook verification request
+    if request.query_params.get("hub.mode") == "subscribe":
+        print("⚠️  Webhook verification received at root path '/' - handling it")
+        print("💡 Tip: Configure Instagram webhook URL to include /webhook path")
+        
+        mode = request.query_params.get("hub.mode")
+        token = request.query_params.get("hub.verify_token") 
+        challenge = request.query_params.get("hub.challenge")
+        
+        print(f"🔍 Webhook verification request at /:")
+        print(f"   Mode: {mode}")
+        print(f"   Token: {token}")
+        print(f"   Challenge: {challenge}")
+        
+        if mode == "subscribe" and token == VERIFY_TOKEN:
+            print("✅ Instagram webhook verification successful!")
+            return int(challenge)
+        else:
+            print("❌ Instagram webhook verification failed!")
+            raise HTTPException(status_code=403, detail="Verification failed")
+    
+    # Otherwise return normal root response
     return {
         "service": "AAA Real Estate Instagram DM Automation",
         "version": "1.0.0",
         "status": "operational",
         "endpoints": {
-            "webhook_verification": "GET /webhook",
-            "webhook_receiver": "POST /webhook", 
+            "webhook_verification": "GET /webhook (or GET /)",
+            "webhook_receiver": "POST /webhook (or POST /)", 
             "health": "GET /health",
             "test": "POST /test"
         },
@@ -71,6 +93,13 @@ async def root():
             "HITL for high-value leads"
         ]
     }
+
+@app.post("/")
+async def root_webhook(request: Request):
+    """Handle Instagram webhooks sent to root path (common misconfiguration)"""
+    print("⚠️  Webhook received at root path '/' - redirecting to webhook handler")
+    print("💡 Tip: Configure Instagram webhook URL to include /webhook path")
+    return await receive_instagram_webhook(request)
 
 @app.get("/health")
 async def health_check():
@@ -98,7 +127,7 @@ async def verify_instagram_webhook(request: Request):
         token = request.query_params.get("hub.verify_token") 
         challenge = request.query_params.get("hub.challenge")
         
-        print(f"🔍 Webhook verification request:")
+        print(f"🔍 Webhook verification request at /webhook:")
         print(f"   Mode: {mode}")
         print(f"   Token: {token}")
         print(f"   Challenge: {challenge}")

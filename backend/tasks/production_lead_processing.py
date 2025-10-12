@@ -113,25 +113,28 @@ class ProductionLeadProcessor:
             )
             
             # Step 7: Store state in Redis (LangGraph checkpointer simulation)
-            thread_state = {
-                "lead": lead_data,
-                "messages": [
-                    {"role": "user", "content": message},
-                    {"role": "assistant", "content": response_message}
-                ],
-                "db_results": db_results,
-                "qualification": qualification_result,
-                "next_agent": next_agent,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            redis_client.setex(
-                f"langgraph:thread:{user_id}",
-                86400,  # 24 hours
-                json.dumps(thread_state, default=str)
-            )
-            
-            print(f"✅ State stored in Redis for thread: {user_id}")
+            try:
+                thread_state = {
+                    "lead": lead_data,
+                    "messages": [
+                        {"role": "user", "content": message},
+                        {"role": "assistant", "content": response_message}
+                    ],
+                    "db_results": db_results,
+                    "qualification": qualification_result,
+                    "next_agent": next_agent,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                redis_client.setex(
+                    f"langgraph:thread:{user_id}",
+                    86400,  # 24 hours
+                    json.dumps(thread_state, default=str)
+                )
+                
+                print(f"✅ State stored in Redis for thread: {user_id}")
+            except Exception as redis_error:
+                print(f"⚠️ Redis unavailable, skipping state storage: {redis_error}")
             
             # Step 8: Handle HITL if needed
             interrupt_needed = await self.check_hitl_interrupt(qualification_result, extracted_info)
