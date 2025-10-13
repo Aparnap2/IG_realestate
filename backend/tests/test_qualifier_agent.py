@@ -78,6 +78,147 @@ class TestQualifierAgent:
         
         with patch('tools.agent_tools.query_properties_tool') as mock_query:
             mock_query.invoke.return_value = []
+
+    def test_partial_info_handling_missing_budget(self, qualifier_agent, agent_state, mock_compliance, mock_audit):
+        """Test qualifier handling of missing budget information."""
+        # Create lead with missing budget
+        agent_state["lead"].budget = None
+        agent_state["lead"].message = "Looking for a 3 bedroom house in Miami"
+        
+        # Mock property query returns results but need budget clarification
+        with patch('tools.agent_tools.query_properties_db') as mock_query:
+            mock_query.return_value = [
+                {"id": "prop1", "price": 350000, "location": "Miami", "bedrooms": 3},
+                {"id": "prop2", "price": 650000, "location": "Miami", "bedrooms": 3},
+            ]
+            
+            with patch('tools.agent_tools.send_instagram_message') as mock_send:
+                mock_send.return_value = True
+                
+                result = qualifier_agent.process(agent_state)
+                
+                # Should ask for budget information instead of qualifying
+                messages = result.get("messages", [])
+                budget_question_found = any(
+                    "budget" in str(msg).lower() for msg in messages
+                )
+                assert budget_question_found
+                assert result.get("requires_more_info", True)
+                assert result.get("next_agent") != "scheduler"  # Should not qualify yet
+
+    def test_partial_info_handling_missing_location(self, qualifier_agent, agent_state, mock_compliance, mock_audit):
+        """Test qualifier handling of missing location information."""
+        agent_state["lead"].location = None
+        agent_state["lead"].message = "Looking for a 3 bedroom house with budget around $400k"
+        
+        with patch('tools.agent_tools.send_instagram_message') as mock_send:
+            mock_send.return_value = True
+            
+            result = qualifier_agent.process(agent_state)
+            
+            # Should ask for location clarification
+            messages = result.get("messages", [])
+            location_clarification = any(
+                "location" in str(msg).lower() or "area" in str(msg).lower() 
+                for msg in messages
+            )
+            assert location_clarification
+            assert result.get("requires_more_info", True)
+
+    def test_partial_info_handling_missing_property_preferences(self, qualifier_agent, agent_state, mock_compliance, mock_audit):
+        """Test qualifier handling of missing property preferences."""
+        agent_state["lead"].property_type = None
+        agent_state["lead"].desired_bedrooms = None
+        agent_state["lead"].message = "Looking for a home in Miami with budget $500k"
+        
+        with patch('tools.agent_tools.send_instagram_message') as mock_send:
+            mock_send.return_value = True
+            
+            result = qualifier_agent.process(agent_state)
+            
+            # Should ask for property preferences
+            messages = result.get("messages", [])
+            preferences_clarification = any(
+                "bedroom" in str(msg).lower() or "property type" in str(msg).lower()
+                for msg in messages
+            )
+            assert preferences_clarification
+
+    def test_budget_mismatch_detection(self, qualifier_agent, agent_state, sample_properties, mock_compliance, mock_audit):
+        """Test budget mismatch detection and suggestions."""
+        # Set up high expectations with low budget
+        agent_state["lead"].budget = 300000
+        agent_state["lead"].desired_bedrooms = 4
+        agent_state["lead"].location = "Miami"
+        
+        # Mock properties where matching requirements cost more
+        with patch('tools.agent_tools.query_properties_db') as mock_query:
+            mock_query.return_value = [
+                {"id": "prop1", "price": 600000, "bedrooms": 4, "location": "Miami"},
+                {"id": "prop2", "price": 550000, "bedrooms": 4, "location": "Miami"},
+            ]
+            
+            with patch('tools.agent_tools.send_instagram_message') as mock_send:
+                mock_send.return_value = True
+                
+                result = qualifier_agent.process(agent_state)
+                
+                # Should detect budget mismatch and offer alternatives
+                messages = result.get("messages", [])
+                budget_mismatch_detected = any(
+                    "budget" in str(msg).lower() and ("higher" in str(msg).lower() or "afford" in str(msg).lower())
+                    for msg in messages
+                )
+                assert budget_mismatch_detected
+                assert "budget_mismatch" in result
+                assert result["budget_mismatch"]["detected"] == True
+
+    def test_no_matching_properties_handling(self, qualifier_agent, agent_state, mock_compliance, mock_audit):
+        """Test handling when no properties match the criteria."""
+        agent_state["lead"].budget = 200000
+        agent_state["lead"].location = "Miami Beach"
+        agent_state["lead"].desired_bedrooms = 3
+        
+        # Mock empty results
+        with patch('tools.agent_tools.query_properties_db') as mock_query:
+            mock_query.return_value = []
+            
+            with patch('tools.agent_tools.send_instagram_message') as mock_send:
+                mock_send.return_value = True
+                
+                result = qualifier_agent.process(agent_state)
+                
+                # Should offer waitlist or suggest alternatives
+                messages = result.get("messages", [])
+                no_match_handling = any(
+                    "waitlist" in str(msg).lower() or "notify" in str(msg).lower() or "alternative" in str(msg).lower()
+                    for msg in messages
+                )
+                assert no_match_handling
+                assert "no_properties_found" in result
+                assert result["no_properties_found"] == True
+
+    def test_complete_info_proceeds_to_qualification(self, qualifier_agent, agent_state, sample_properties, mock_compliance, mock_audit):
+        """Test that complete information proceeds to normal qualification."""
+        # Lead with all required information
+        agent_state["lead"].budget = 400000
+        agent_state["lead"].location = "Miami"
+        agent_state["lead"].desired_bedrooms = 3
+        agent_state["lead"].property_type = "house"
+        
+        # Mock good matching properties
+        with patch('tools.agent_tools.query_properties_db') as mock_query:
+            mock_query.return_value = sample_properties
+            
+            with patch('tools.agent_tools.qualify_lead_with_llm') as mock_qualify:
+                mock_qualify.return_value = {"score": 0.8, "reasoning": "Good match"}
+                
+                result = qualifier_agent.process(agent_state)
+                
+                # Should proceed to qualification normally
+                assert not result.get("requires_more_info", False)
+                assert "score" in result or getattr(result.get("lead"), "qualified_score", None) is not None
+                assert result.get("next_agent") in ["scheduler", "followup"]
             
             with patch('tools.agent_tools.qualify_lead_with_llm') as mock_qualify:
                 mock_qualify.invoke.return_value = {"score": 0.6, "reasoning": "Base score"}

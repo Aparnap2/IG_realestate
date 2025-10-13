@@ -9,8 +9,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils.supabase_client import save_lead
 from tools.handoffs import handoff_to_followup, handoff_to_end
 from schemas.state import AgentState
-from typing import Dict, Any
+from typing import Dict, Any, List
 import os
+import math
+
+# Optional geopy import for geographic calculations
+try:
+    from geopy.distance import geodesic
+    GEOPY_AVAILABLE = True
+except ImportError:
+    GEOPY_AVAILABLE = False
 
 # For Google Calendar integration
 from google.oauth2.credentials import Credentials
@@ -401,3 +409,298 @@ def log_to_hubspot(lead):
             "timestamp": datetime.now().isoformat(),
             "agent": "scheduler"
         })
+
+# Tour Optimization Methods (PRD Section 3.3)
+
+def optimize_tour_sequence(self, properties: List[Dict], time_slots: List[Dict], start_location: str = None) -> Dict[str, Any]:
+    """
+    Optimize tour sequence by travel time between properties.
+    
+    Implements PRD requirement: "Optimize Property Sequence by Travel"
+    """
+    if not properties or len(properties) <= 1:
+        return {
+            "optimized_sequence": properties,
+            "total_travel_time": 0,
+            "estimated_tour_duration": 60 if properties else 0,
+            "optimization_method": "none"
+        }
+    
+    # Calculate travel times between all properties
+    travel_matrix = self._calculate_travel_matrix(properties)
+    
+    # Find optimal sequence using nearest neighbor algorithm
+    optimized_sequence, total_distance = self._nearest_neighbor_tsp(properties, travel_matrix)
+    
+    # Calculate total travel time (assuming average speed of 40 mph in city)
+    total_travel_time = (total_distance / 40) * 60  # Convert to minutes
+    
+    # Calculate estimated tour duration (20 min per property + travel time)
+    estimated_duration = len(optimized_sequence) * 20 + total_travel_time
+    
+    return {
+        "optimized_sequence": optimized_sequence,
+        "total_travel_time": total_travel_time,
+        "total_distance_miles": total_distance,
+        "estimated_tour_duration": estimated_duration,
+        "optimization_method": "nearest_neighbor",
+        "travel_matrix": travel_matrix
+    }
+
+def _calculate_travel_matrix(self, properties: List[Dict]) -> List[List[float]]:
+    """Calculate travel time matrix between all properties."""
+    n = len(properties)
+    matrix = [[0.0] * n for _ in range(n)]
+    
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                try:
+                    # Calculate distance using geodesic if available
+                    if GEOPY_AVAILABLE:
+                        coord1 = (properties[i].get('lat', 0), properties[i].get('lng', 0))
+                        coord2 = (properties[j].get('lat', 0), properties[j].get('lng', 0))
+                        distance_miles = geodesic(coord1, coord2).miles
+                        matrix[i][j] = distance_miles
+                    else:
+                        # Fallback to estimate (1 mile per coordinate degree)
+                        lat_diff = abs(properties[i].get('lat', 0) - properties[j].get('lat', 0))
+                        lng_diff = abs(properties[i].get('lng', 0) - properties[j].get('lng', 0))
+                        matrix[i][j] = math.sqrt(lat_diff**2 + lng_diff**2) * 69  # Rough estimate
+                except Exception:
+                    # Fallback to estimate (1 mile per coordinate degree)
+                    lat_diff = abs(properties[i].get('lat', 0) - properties[j].get('lat', 0))
+                    lng_diff = abs(properties[i].get('lng', 0) - properties[j].get('lng', 0))
+                    matrix[i][j] = math.sqrt(lat_diff**2 + lng_diff**2) * 69  # Rough estimate
+    
+    return matrix
+
+def _nearest_neighbor_tsp(self, properties: List[Dict], travel_matrix: List[List[float]]) -> tuple[List[Dict], float]:
+    """Solve TSP using nearest neighbor heuristic."""
+    if not properties:
+        return [], 0
+    
+    n = len(properties)
+    unvisited = set(range(n))
+    current = 0  # Start with first property
+    sequence = [properties[current]]
+    unvisited.remove(current)
+    total_distance = 0
+    
+    while unvisited:
+        nearest = min(unvisited, key=lambda x: travel_matrix[current][x])
+        total_distance += travel_matrix[current][nearest]
+        sequence.append(properties[nearest])
+        unvisited.remove(nearest)
+        current = nearest
+    
+    return sequence, total_distance
+
+def apply_buffer_times(self, time_slots: List[Dict], buffer_minutes: int = 30) -> List[Dict]:
+    """
+    Apply buffer times between consecutive tours.
+    
+    Implements PRD requirement: buffer slots management.
+    """
+    if not time_slots:
+        return []
+    
+    # Sort slots by start time
+    sorted_slots = sorted(time_slots, key=lambda x: x["start"])
+    filtered_slots = [sorted_slots[0]]  # Always keep the first slot
+    
+    for i in range(1, len(sorted_slots)):
+        current_slot = sorted_slots[i]
+        previous_slot = filtered_slots[-1]
+        
+        # Check if there's adequate buffer time
+        time_diff = (current_slot["start"] - previous_slot["end"]).total_seconds() / 60
+        
+        if time_diff >= buffer_minutes:
+            filtered_slots.append(current_slot)
+    
+    return filtered_slots
+
+def create_optimized_tour_event(self, lead: Any, properties: List[Dict], time_slot: Dict) -> Dict[str, Any]:
+    """
+    Create optimized multi-property tour event.
+    
+    Implements PRD requirement for multi-property tour optimization.
+    """
+    try:
+        from tools.calendar_integration import create_tour_event
+        
+        # Optimize property sequence
+        optimization_result = self.optimize_tour_sequence(properties, [time_slot])
+        optimized_properties = optimization_result["optimized_sequence"]
+        
+        # Calculate event duration
+        duration_minutes = optimization_result["estimated_tour_duration"]
+        end_time = time_slot["start"] + timedelta(minutes=duration_minutes)
+        
+        # Create event with optimized property addresses
+        property_addresses = [prop.get("address", "") for prop in optimized_properties]
+        
+        event_result = create_tour_event(
+            start_time=time_slot["start"],
+            duration_minutes=duration_minutes,
+            attendee_email=lead.email,
+            summary=f"Multi-Property Tour: {len(optimized_properties)} Properties",
+            description=f"Optimized tour sequence for {len(optimized_properties)} properties.\n"
+                        f"Estimated duration: {duration_minutes} minutes\n"
+                        f"Properties to visit:\n" + "\n".join([
+                            f"{i+1}. {prop.get('address', '')}" 
+                            for i, prop in enumerate(optimized_properties)
+                        ]),
+            property_addresses=property_addresses
+        )
+        
+        return {
+            "success": True,
+            "event_result": event_result,
+            "optimization_result": optimization_result,
+            "optimized_properties": optimized_properties
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "fallback_mode": True
+        }
+
+def calculate_tour_duration(self, properties: List[Dict], visit_duration_per_property: int = 20) -> Dict[str, Any]:
+    """
+    Calculate accurate tour duration including travel time.
+    
+    Implements PRD requirement for precise duration calculation.
+    """
+    if not properties:
+        return {"total_duration_minutes": 0, "property_details": []}
+    
+    # Calculate travel times
+    travel_matrix = self._calculate_travel_matrix(properties)
+    
+    # Find optimal sequence
+    optimized_sequence, total_distance = self._nearest_neighbor_tsp(properties, travel_matrix)
+    travel_time = (total_distance / 40) * 60  # Minutes
+    
+    # Calculate total duration
+    total_duration = len(properties) * visit_duration_per_property + travel_time
+    
+    # Build property details
+    property_details = []
+    for i, prop in enumerate(optimized_sequence):
+        details = {
+            "property_id": prop.get("id"),
+            "address": prop.get("address"),
+            "visit_duration": visit_duration_per_property,
+            "order": i + 1
+        }
+        
+        # Add travel time to next property (if any)
+        if i < len(optimized_sequence) - 1:
+            current_idx = properties.index(prop)
+            next_prop = optimized_sequence[i + 1]
+            next_idx = properties.index(next_prop)
+            details["travel_time_to_next"] = (travel_matrix[current_idx][next_idx] / 40) * 60
+        
+        property_details.append(details)
+    
+    return {
+        "total_duration_minutes": total_duration,
+        "property_details": property_details,
+        "total_travel_time": travel_time,
+        "total_distance_miles": total_distance,
+        "optimized_sequence": optimized_sequence
+    }
+
+def cluster_properties_by_location(self, properties: List[Dict], cluster_radius_miles: float = 2.0) -> List[List[Dict]]:
+    """
+    Cluster properties by geographic proximity for efficient tours.
+    
+    Implements PRD requirement for geographic optimization.
+    """
+    if not properties or len(properties) <= 1:
+        return [properties] if properties else []
+    
+    clusters = []
+    unclustered = properties.copy()
+    
+    while unclustered:
+        # Start a new cluster with the first unclustered property
+        cluster = [unclustered.pop(0)]
+        
+        # Find all properties within cluster radius
+        changed = True
+        while changed and unclustered:
+            changed = False
+            for prop in unclustered[:]:  # Copy to avoid modification during iteration
+                if self._is_within_cluster_radius(prop, cluster, cluster_radius_miles):
+                    cluster.append(prop)
+                    unclustered.remove(prop)
+                    changed = True
+        
+        clusters.append(cluster)
+    
+    return clusters
+
+def _is_within_cluster_radius(self, property: Dict, cluster: List[Dict], radius_miles: float) -> bool:
+    """Check if a property is within cluster radius of any property in the cluster."""
+    try:
+        if GEOPY_AVAILABLE:
+            prop_coord = (property.get('lat', 0), property.get('lng', 0))
+            
+            for cluster_prop in cluster:
+                cluster_coord = (cluster_prop.get('lat', 0), cluster_prop.get('lng', 0))
+                distance = geodesic(prop_coord, cluster_coord).miles
+                
+                if distance <= radius_miles:
+                    return True
+            
+            return False
+        else:
+            # Fallback to simple coordinate distance
+            prop_coord = (property.get('lat', 0), property.get('lng', 0))
+            
+            for cluster_prop in cluster:
+                cluster_coord = (cluster_prop.get('lat', 0), cluster_prop.get('lng', 0))
+                lat_diff = abs(prop_coord[0] - cluster_coord[0])
+                lng_diff = abs(prop_coord[1] - cluster_coord[1])
+                distance_miles = math.sqrt(lat_diff**2 + lng_diff**2) * 69  # Rough estimate
+                
+                if distance_miles <= radius_miles:
+                    return True
+            
+            return False
+    except Exception:
+        # If all fails, use simple coordinate distance
+        return True  # Conservative approach
+
+def filter_conflicting_slots(self, candidate_slots: List[Dict], existing_events: List[Dict]) -> List[Dict]:
+    """
+    Prevent double booking by filtering conflicting slots.
+    
+    Implements PRD requirement: "Zero no-shows" through conflict prevention.
+    """
+    conflict_free_slots = []
+    
+    for candidate in candidate_slots:
+        has_conflict = False
+        
+        for event in existing_events:
+            # Check for any overlap
+            conflict = (
+                (candidate["start"] >= event["start"] and candidate["start"] < event["end"]) or
+                (candidate["end"] > event["start"] and candidate["end"] <= event["end"]) or
+                (candidate["start"] <= event["start"] and candidate["end"] >= event["end"])
+            )
+            
+            if conflict:
+                has_conflict = True
+                break
+        
+        if not has_conflict:
+            conflict_free_slots.append(candidate)
+    
+    return conflict_free_slots

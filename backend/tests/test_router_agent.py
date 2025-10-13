@@ -109,6 +109,61 @@ class TestRouterAgent:
             
             assert result["requires_human_review"] == True
             assert result["current_agent"] == "human"
+
+    @pytest.mark.asyncio
+    async def test_confidence_threshold_0_6_boundary(self, router_agent, agent_state, mock_compliance):
+        """Test confidence threshold at exactly 0.6 boundary."""
+        # Test exactly at threshold - should NOT route to human review
+        mock_classification_at_threshold = IntentClassification(
+            intent="new_inquiry",
+            confidence=0.6,  # Exactly at threshold
+            requires_qualification=True,
+            next_agent="qualifier",
+            reasoning="Moderate confidence",
+            urgency_level="medium"
+        )
+        
+        with patch.object(router_agent.llm, 'ainvoke', return_value=mock_classification_at_threshold):
+            result = await router_agent.process(agent_state)
+            
+            assert result["current_agent"] == "qualifier"  # Should not route to human
+            assert result.get("requires_human_review", False) == False
+
+    @pytest.mark.asyncio
+    async def test_confidence_just_below_threshold(self, router_agent, agent_state, mock_compliance):
+        """Test confidence just below 0.6 threshold."""
+        mock_classification_below = IntentClassification(
+            intent="new_inquiry",
+            confidence=0.59,  # Just below threshold
+            requires_qualification=True,
+            next_agent="qualifier",
+            reasoning="Slightly below threshold",
+            urgency_level="medium"
+        )
+        
+        with patch.object(router_agent.llm, 'ainvoke', return_value=mock_classification_below):
+            result = await router_agent.process(agent_state)
+            
+            assert result["requires_human_review"] == True
+            assert result["current_agent"] == "human"
+
+    @pytest.mark.asyncio
+    async def test_high_confidence_bypasses_human_review(self, router_agent, agent_state, mock_compliance):
+        """Test that high confidence (>0.8) routes normally without human review."""
+        mock_classification_high = IntentClassification(
+            intent="schedule_tour",
+            confidence=0.9,  # High confidence
+            requires_qualification=False,
+            next_agent="scheduler",
+            reasoning="Clear tour request",
+            urgency_level="high"
+        )
+        
+        with patch.object(router_agent.llm, 'ainvoke', return_value=mock_classification_high):
+            result = await router_agent.process(agent_state)
+            
+            assert result["current_agent"] == "scheduler"  # Normal routing
+            assert result.get("requires_human_review", False) == False
     
     @pytest.mark.asyncio
     async def test_high_value_lead_priority_routing(self, router_agent, agent_state, mock_compliance):

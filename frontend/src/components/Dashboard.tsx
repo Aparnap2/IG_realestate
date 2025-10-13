@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { useLeads } from '../hooks/useLeads'
 import { useQuery } from '@tanstack/react-query'
 import { supabase, type Company } from '../lib/supabase'
 import LeadsTable from './LeadsTable'
@@ -24,40 +25,15 @@ export default function Dashboard({ company, onCompanyChange }: DashboardProps) 
     }
   }, [user, loading, navigate])
 
-  const { data: leads, isLoading } = useQuery({
-    queryKey: ['leads', company.id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('leads')
-        .select('*')
-        .eq('company_id', company.id)
-        .order('created_at', { ascending: false })
+  const { data: leads, isLoading } = useLeads()
 
-      if (error) throw error
-      return data
-    },
-    enabled: !!user && !!company.id,
-  })
-
-  const { data: metrics } = useQuery({
-    queryKey: ['metrics', company.id],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('leads')
-        .select('status, qualified_score')
-        .eq('company_id', company.id)
-
-      if (error) throw error
-
-      const total = data.length
-      const qualified = data.filter(l => l.qualified_score && l.qualified_score > 0.7).length
-      const scheduled = data.filter(l => l.status === 'scheduled').length
-      const avgScore = data.reduce((acc, l) => acc + (l.qualified_score || 0), 0) / total
-
-      return { total, qualified, scheduled, avgScore }
-    },
-    enabled: !!user && !!company.id,
-  })
+  // Calculate metrics from mock leads
+  const metrics = leads ? {
+    total: leads.length,
+    qualified: leads.filter(l => l.qualified_score && l.qualified_score > 0.7).length,
+    scheduled: leads.filter(l => l.status === 'scheduled').length,
+    avgScore: leads.reduce((acc, l) => acc + (l.qualified_score || 0), 0) / leads.length
+  } : { total: 0, qualified: 0, scheduled: 0, avgScore: 0 }
 
   const { data: integrations } = useQuery({
     queryKey: ['integrations', company.id],

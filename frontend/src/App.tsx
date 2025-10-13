@@ -51,6 +51,36 @@ function AppContent() {
     return <Login />
   }
 
+  // TEMPORARY: Auto-select mock company for testing
+  if (!selectedCompany) {
+    const mockCompany = {
+      id: 'mock-company-123',
+      name: 'AAA Real Estate Test',
+      slug: 'aaa-real-estate-test',
+      industry: 'Real Estate',
+      subscription_tier: 'professional' as const,
+      is_active: true,
+      created_at: '2025-10-13T00:00:00Z',
+      updated_at: '2025-10-13T00:00:00Z',
+      settings: {
+        branding: {
+          primary_color: '#3b82f6'
+        },
+        features: {
+          hitl_enabled: true,
+          analytics_enabled: true,
+          custom_workflows: true
+        }
+      }
+    }
+    
+    // Auto-select for testing
+    setSelectedCompany(mockCompany)
+    localStorage.setItem('selectedCompanyId', mockCompany.id)
+  }
+
+  // Skip company selector for now
+  /* 
   if (!selectedCompany) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -61,6 +91,7 @@ function AppContent() {
       </div>
     )
   }
+  */
 
   return (
     <div className="min-h-screen bg-gray-50">

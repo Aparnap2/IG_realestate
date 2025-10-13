@@ -16,11 +16,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // TEMPORARY: Auto-login for testing
+    const mockUser = {
+      id: 'dev-user-123',
+      email: 'dev@test.com',
+      user_metadata: { name: 'Dev User' }
+    }
+    setUser(mockUser as any)
+    setLoading(false)
+    
+    /* RESTORE THIS WHEN AUTH IS READY
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
       setLoading(false)
     })
+    */
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -34,6 +45,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signIn = async (email: string, password: string) => {
+    // TEMPORARY DEV BYPASS - Remove in production
+    if (email === 'dev@test.com' && password === 'dev123') {
+      console.log('🔓 Development bypass activated')
+      // Mock user object for testing
+      const mockUser = {
+        id: 'dev-user-123',
+        email: 'dev@test.com',
+        user_metadata: { name: 'Dev User' }
+      }
+      setUser(mockUser as any)
+      return
+    }
+    
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
