@@ -9,7 +9,7 @@ import asyncio
 from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime, timedelta
 
-from agents.prd_compliant_workflow import QualifierAgent
+from backend.agents.prd_compliant_workflow import QualifierAgent
 from tools.qualifier_utils import (
     reconcile_budget_mismatch,
     calculate_temporal_qualification_adjustments
@@ -39,7 +39,7 @@ class TestQualifierAgent:
         )
         
         # Mock LLM qualification
-        with patch('tools.agent_tools.get_llm_response', return_value='{"score": 0.8, "reasoning": "Good match"}'):
+        with patch('tools.agent_tools.get_llm_response_sync', return_value='{"score": 0.8, "reasoning": "Good match"}'):
             with patch('tools.agent_tools.send_instagram_message') as mock_send:
                 mock_send.invoke.return_value = True
                 

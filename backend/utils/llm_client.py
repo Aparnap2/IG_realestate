@@ -5,6 +5,7 @@ import os
 import aiohttp
 import asyncio
 import json
+import threading
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
@@ -70,6 +71,47 @@ async def get_llm_response(
         print(f"Error getting LLM response: {e}")
         return "I apologize, but I'm having trouble processing your request right now. Please try again later."
 
+
+def _run_coro_sync(coro_fn, *args, **kwargs):
+    """Run an async coroutine in a blocking context using a dedicated thread."""
+    try:
+        return asyncio.run(coro_fn(*args, **kwargs))
+    except RuntimeError:
+        # Likely inside an active event loop; execute in separate thread
+        result_container: Dict[str, Any] = {}
+        exception_container: Dict[str, BaseException] = {}
+
+        def _runner():
+            try:
+                result_container["value"] = asyncio.run(coro_fn(*args, **kwargs))
+            except BaseException as exc:  # noqa: BLE001 - propagate any exception
+                exception_container["error"] = exc
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+        thread.join()
+
+        if "error" in exception_container:
+            raise exception_container["error"]
+
+        return result_container.get("value")
+
+
+def get_llm_response_sync(
+    prompt: str,
+    model: str = DEFAULT_OPENROUTER_MODEL,
+    max_tokens: int = 1000,
+    temperature: float = 0.7
+) -> str:
+    """Blocking wrapper around get_llm_response for sync contexts."""
+    return _run_coro_sync(
+        get_llm_response,
+        prompt=prompt,
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature
+    )
+
 def get_structured_llm_response(
     prompt: str,
     response_format: Dict[str, Any],
@@ -89,8 +131,8 @@ def get_structured_llm_response(
     try:
         # Add format instructions to prompt
         format_prompt = f"{prompt}\n\nPlease respond in the following JSON format:\n{response_format}"
-        
-        response = get_llm_response(format_prompt, model)
+
+        response = get_llm_response_sync(format_prompt, model=model)
         
         # Try to parse as JSON
         import json
@@ -206,4 +248,4 @@ def generate_response_message(
     else:
         prompt = f"Generate a professional real estate response for: {lead_info}"
     
-    return get_llm_response(prompt)
+    return get_llm_response_sync(prompt)

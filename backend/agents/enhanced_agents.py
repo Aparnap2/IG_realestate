@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from utils.supabase_client import query_properties_db, save_lead, get_config
 from utils.redis_client import cache_query_result, get_cached_query_result, redis_client
-from utils.llm_client import get_llm_response
+from utils.llm_client import get_llm_response_sync
 from schemas.state import AgentState
 from utils.observability import track_performance, metrics_collector
 
@@ -169,7 +169,7 @@ Provide your response as a JSON object with the following structure:
         )
         
         # Get LLM response
-        score_response = get_llm_response(prompt)
+        score_response = get_llm_response_sync(prompt)
         
         # Parse the response
         try:

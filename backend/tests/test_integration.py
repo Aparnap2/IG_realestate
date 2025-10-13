@@ -34,7 +34,7 @@ def sample_state(sample_lead):
 
 @patch('backend.agents.qualifier.get_config', side_effect=lambda key, default: default)
 @patch('backend.agents.qualifier.query_properties_db')
-@patch('backend.agents.qualifier.get_llm_response')
+@patch('backend.agents.qualifier.get_llm_response_sync')
 @patch('backend.agents.qualifier.cache_query_result')
 @patch('backend.agents.qualifier.save_lead')
 def test_qualifier_to_scheduler_flow(mock_save, mock_cache, mock_llm, mock_db, mock_get_config, sample_state):
@@ -66,7 +66,7 @@ def test_qualifier_to_scheduler_flow(mock_save, mock_cache, mock_llm, mock_db, m
     mock_cache.assert_called_once()
 
 @patch('backend.agents.qualifier.query_properties_db')
-@patch('backend.agents.qualifier.get_llm_response')
+@patch('backend.agents.qualifier.get_llm_response_sync')
 @patch('backend.agents.qualifier.cache_query_result')
 @patch('backend.agents.qualifier.save_lead')
 def test_qualifier_to_followup_flow(mock_save, mock_cache, mock_llm, mock_db, sample_state):
@@ -90,7 +90,7 @@ def test_qualifier_to_followup_flow(mock_save, mock_cache, mock_llm, mock_db, sa
     mock_cache.assert_called_once()
 
 @patch('backend.agents.qualifier.query_properties_db')
-@patch('backend.agents.qualifier.get_llm_response')
+@patch('backend.agents.qualifier.get_llm_response_sync')
 @patch('backend.agents.qualifier.cache_query_result')
 @patch('backend.agents.qualifier.save_lead')
 def test_qualifier_to_hitl_flow(mock_save, mock_cache, mock_llm, mock_db):
@@ -202,7 +202,7 @@ def test_lead_history_persistence(sample_lead):
     
     # Simulate qualifier processing
     with patch('backend.agents.qualifier.query_properties_db') as mock_db, \
-         patch('backend.agents.qualifier.get_llm_response') as mock_llm, \
+         patch('backend.agents.qualifier.get_llm_response_sync') as mock_llm, \
          patch('backend.agents.qualifier.cache_query_result') as mock_cache, \
          patch('backend.agents.qualifier.save_lead') as mock_save:
         

@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from utils.supabase_client import query_properties_db, save_lead, get_config
 from utils.redis_client import cache_query_result, get_cached_query_result
-from utils.llm_client import get_llm_response
+from utils.llm_client import get_llm_response_sync
 
 # Database and Caching Tools
 @tool
@@ -145,7 +145,7 @@ Provide your response as a JSON object with the following structure:
         )
         
         # Get LLM response
-        response = get_llm_response(prompt)
+        response = get_llm_response_sync(prompt)
         
         # Parse response
         try:

@@ -120,6 +120,12 @@ def reconcile_budget_mismatch(
                     "message": f"Expanding search to nearby areas could unlock {desired_bedrooms}BR options within budget"
                 })
         
+        # Generate fallback options if none were identified
+        if not options:
+            options.extend(
+                _build_fallback_options(inventory, desired_bedrooms, budget)
+            )
+
         # Generate final recommendation
         recommendation = _generate_reconciliation_recommendation(options, desired_bedrooms, budget)
         
@@ -155,7 +161,7 @@ def reconcile_budget_mismatch(
             "alternatives": [],
             "recommendation": "manual_review",
             "message": "Let me connect you with our team to explore all available options for your criteria.",
-            "reasoning": f"Reconciliation failed: {str(e)}"
+            "reasoning": f"Reconciliation error: {str(e)}"
         }
 
 def _analyze_inventory_by_bedrooms(inventory: List[Dict[str, Any]], budget: int) -> Dict[str, Any]:
@@ -323,6 +329,58 @@ def _format_reconciliation_message(
     
     return "\n\n".join(message_parts)
 
+
+def _build_fallback_options(
+    inventory: List[Dict[str, Any]],
+    desired_bedrooms: Optional[int],
+    budget: Optional[int]
+) -> List[Dict[str, Any]]:
+    """Generate baseline reconciliation options when heuristics find none."""
+    if not inventory:
+        return []
+
+    budget = budget or 0
+    fallback_options: List[Dict[str, Any]] = []
+
+    cheapest = min(
+        inventory,
+        key=lambda prop: prop.get("price", float("inf")) or float("inf")
+    )
+
+    overage = max(0, (cheapest.get("price") or 0) - budget)
+
+    fallback_options.append({
+        "type": "stretch_budget",
+        "bedrooms": cheapest.get("bedrooms", desired_bedrooms),
+        "count": 1,
+        "avg_overage": overage or 0,
+        "value_prop": "Closest available option given current inventory",
+        "message": (
+            "I did not find budget-aligned matches, but the most affordable option "
+            f"available is a {cheapest.get('bedrooms', desired_bedrooms)}BR at ${cheapest.get('price', 0):,.0f}.\n"
+            "We can explore financing options or adjust search criteria together."
+        )
+    })
+
+    if desired_bedrooms and desired_bedrooms > 1:
+        smaller_units = [
+            prop for prop in inventory
+            if prop.get("bedrooms", 0) == desired_bedrooms - 1
+        ]
+        if smaller_units:
+            fallback_options.append({
+                "type": "premium_alternative",
+                "bedrooms": desired_bedrooms - 1,
+                "count": len(smaller_units),
+                "value_prop": "Smaller layout with premium upgrades",
+                "message": (
+                    f"We can consider well-appointed {desired_bedrooms - 1}BR options that "
+                    "offer strong amenities while staying close to budget."
+                )
+            })
+
+    return fallback_options
+
 def calculate_temporal_qualification_adjustments(
     lead_data: Dict[str, Any],
     base_score: float
@@ -422,5 +480,5 @@ def calculate_temporal_qualification_adjustments(
             "base_score": base_score,
             "total_adjustment": 0,
             "adjustments": [],
-            "reasoning": f"Temporal adjustment failed: {str(e)}"
+            "reasoning": f"Temporal adjustment error: {str(e)}"
         }

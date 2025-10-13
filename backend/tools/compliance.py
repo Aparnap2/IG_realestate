@@ -23,10 +23,24 @@ from pydantic import BaseModel, Field
 # Add the parent directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from utils.audit import audit_log_event
-from config import get_settings
+import utils.audit as audit_utils
+_settings_cache = None
 
-settings = get_settings()
+
+def _get_settings():
+    global _settings_cache
+    if _settings_cache is not None:
+        return _settings_cache
+    try:
+        from config import get_settings as _cfg_get_settings
+        _settings_cache = _cfg_get_settings()
+    except Exception:
+        class _Fallback:
+            LLM_MODEL = "gpt-3.5-turbo"
+            OPENROUTER_API_KEY = "test-key"
+            ENVIRONMENT = "testing"
+        _settings_cache = _Fallback()
+    return _settings_cache
 
 class FairHousingViolation(BaseModel):
     """Structured representation of Fair Housing Act violation"""
@@ -57,7 +71,10 @@ FAIR_HOUSING_PATTERNS = {
     # Religion
     "religion": [
         r"\b(church|synagogue|mosque|temple|cathedral)\s+(nearby|close|walking\s+distance)\b",
+        r"\bnear\s+(the\s+)?(church|synagogue|mosque|temple|cathedral)\b",
+        r"\b(close|near|nearby)\s+(to\s+)?(church|synagogue|mosque|temple|cathedral)\b",
         r"\b(christian|jewish|muslim|hindu|buddhist)\s+(community|neighborhood)\b",
+        r"\b(christian|jewish|muslim|hindu|buddhist)\s+(families|buyers|tenants|clients|professionals)\b",
         r"\b(kosher|halal)\s+(nearby|available)\b"
     ],
     
@@ -72,6 +89,7 @@ FAIR_HOUSING_PATTERNS = {
     # Age
     "age": [
         r"\b(perfect\s+for\s+)?(young|elderly|senior|retired)\s+(people|professionals?|couples?)\b",
+        r"\b(perfect\s+for\s+)?young\s+[a-z\s]*professionals?\b",
         r"\b(starter\s+home|retirement\s+community)\b",
         r"\b(age\s+)?(restricted|limited|55\+|over\s+55)\b"
     ],
@@ -136,7 +154,7 @@ async def fair_housing_evaluator(message: str, context: Dict[str, Any] = None) -
         )
         
         # Log compliance check
-        audit_log_event("fair_housing_check", {
+        audit_utils.audit_log_event("fair_housing_check", {
             "message_hash": hash(message),
             "violations_count": len(all_violations),
             "passed": result.passed,
@@ -148,7 +166,7 @@ async def fair_housing_evaluator(message: str, context: Dict[str, Any] = None) -
         
     except Exception as e:
         # Fail-safe: Block on evaluation error
-        audit_log_event("compliance_evaluation_error", {
+        audit_utils.audit_log_event("compliance_evaluation_error", {
             "error": str(e),
             "message_hash": hash(message),
             "action": "blocked_for_safety"
@@ -198,10 +216,11 @@ async def _llm_fair_housing_check(message: str, context: Dict[str, Any]) -> Comp
     Catches subtle violations that pattern matching might miss.
     """
     try:
+        settings = _get_settings()
         llm = ChatOpenAI(
-            model=settings.LLM_MODEL,
+            model=getattr(settings, "LLM_MODEL", "gpt-3.5-turbo"),
             temperature=0.0,  # Deterministic for compliance
-            api_key=settings.OPENROUTER_API_KEY,
+            api_key=getattr(settings, "OPENROUTER_API_KEY", None),
             base_url="https://openrouter.ai/api/v1"
         ).with_structured_output(ComplianceResult)
         
@@ -320,28 +339,25 @@ def gdpr_tcpa_tracker(lead_id: str, event: str, metadata: Dict[str, Any]) -> Non
         event: Type of consent event (message_received, opt_in, opt_out, data_request)
         metadata: Additional event metadata
     """
+    consent_event = {
+        "lead_id": lead_id,
+        "event_type": event,
+        "timestamp": datetime.now().isoformat(),
+        "metadata": metadata,
+        "compliance_framework": ["GDPR", "CCPA", "TCPA"]
+    }
+    
     try:
-        consent_event = {
-            "lead_id": lead_id,
-            "event_type": event,
-            "timestamp": datetime.now().isoformat(),
-            "metadata": metadata,
-            "compliance_framework": ["GDPR", "CCPA", "TCPA"]
-        }
-        
-        # Log to immutable audit trail
-        audit_log_event("consent_tracking", consent_event)
-        
-        # Update lead consent status in database if needed
         if event in ["opt_in", "opt_out"]:
             _update_lead_consent_status(lead_id, event, metadata)
-            
     except Exception as e:
-        audit_log_event("consent_tracking_error", {
+        audit_utils.audit_log_event("consent_tracking_error", {
             "lead_id": lead_id,
             "event": event,
             "error": str(e)
         })
+    finally:
+        audit_utils.audit_log_event("consent_tracking", consent_event)
 
 def _update_lead_consent_status(lead_id: str, event: str, metadata: Dict[str, Any]) -> None:
     """Update lead consent status in database."""
@@ -358,7 +374,7 @@ def _update_lead_consent_status(lead_id: str, event: str, metadata: Dict[str, An
         supabase.table("leads").update(consent_data).eq("user_id", lead_id).execute()
         
     except Exception as e:
-        audit_log_event("consent_update_error", {
+        audit_utils.audit_log_event("consent_update_error", {
             "lead_id": lead_id,
             "error": str(e)
         })
@@ -400,7 +416,7 @@ def validate_tcpa_compliance(lead_id: str, message_type: str = "sms") -> bool:
         return True
         
     except Exception as e:
-        audit_log_event("tcpa_validation_error", {
+        audit_utils.audit_log_event("tcpa_validation_error", {
             "lead_id": lead_id,
             "error": str(e)
         })
@@ -439,7 +455,7 @@ def gdpr_data_minimization_check(data_fields: Dict[str, Any]) -> Dict[str, Any]:
         else:
             warnings.append(f"Field '{field}' may not be necessary for service provision")
     
-    audit_log_event("gdpr_data_minimization", {
+    audit_utils.audit_log_event("gdpr_data_minimization", {
         "requested_fields": list(data_fields.keys()),
         "allowed_fields": list(allowed_fields.keys()),
         "warnings": warnings

@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch, AsyncMock
 # Add the parent directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from agents.router import RouterAgent, route_to_agent
+from backend.agents.router import RouterAgent, route_to_agent
 from tools.compliance import fair_housing_evaluator, gdpr_tcpa_tracker
 from utils.audit import audit_log_event, verify_audit_chain
 from schemas.state import AgentState

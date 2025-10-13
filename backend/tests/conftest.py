@@ -11,8 +11,14 @@ import sys
 from datetime import datetime, timedelta
 from unittest.mock import Mock, AsyncMock, patch
 
-# Add the parent directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# Add repository paths to module search
+BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+REPO_DIR = os.path.abspath(os.path.join(BACKEND_DIR, '..'))
+
+if BACKEND_DIR not in sys.path:
+    sys.path.insert(0, BACKEND_DIR)
+if REPO_DIR not in sys.path:
+    sys.path.insert(0, REPO_DIR)
 
 @pytest.fixture(scope="session")
 def event_loop():
@@ -139,7 +145,7 @@ def mock_llm():
         "reasoning": "High budget and specific location indicate serious buyer"
     }
     
-    with patch('utils.llm_client.get_llm_response', return_value='{"score": 0.8, "reasoning": "Test reasoning"}'):
+    with patch('utils.llm_client.get_llm_response_sync', return_value='{"score": 0.8, "reasoning": "Test reasoning"}'):
         yield mock_response
 
 @pytest.fixture
@@ -183,6 +189,20 @@ def mock_temporal_graph():
     
     with patch('temporal.graph_client.get_graphiti_client', return_value=mock_client):
         yield mock_client
+
+
+@pytest.fixture
+def qualifier_agent(mock_settings, mock_supabase, mock_compliance, mock_audit, mock_temporal_graph):
+    """Provide a QualifierAgent with dependencies mocked."""
+    from backend.agents.prd_compliant_workflow import QualifierAgent
+    return QualifierAgent()
+
+
+@pytest.fixture
+def router_agent(mock_settings, mock_supabase, mock_compliance, mock_audit, mock_temporal_graph):
+    """Provide a RouterAgent with dependencies mocked."""
+    from backend.agents.router import RouterAgent
+    return RouterAgent()
 
 @pytest.fixture
 def agent_state(sample_lead):

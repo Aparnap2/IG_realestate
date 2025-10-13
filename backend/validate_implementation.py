@@ -23,7 +23,7 @@ def validate_phase_1_foundation():
     
     # Test 1: Router Agent
     try:
-        from agents.router import RouterAgent, route_to_agent
+        from backend.agents.router import RouterAgent, route_to_agent
         from models.lead import Lead
         
         router = RouterAgent()
@@ -359,7 +359,7 @@ def validate_workflow_integration():
     
     # Test 2: Enhanced Agents
     try:
-        from agents.prd_compliant_workflow import QualifierAgent, SchedulerAgent, FollowUpAgent
+        from backend.agents.prd_compliant_workflow import QualifierAgent, SchedulerAgent, FollowUpAgent
         
         qualifier = QualifierAgent()
         scheduler = SchedulerAgent()

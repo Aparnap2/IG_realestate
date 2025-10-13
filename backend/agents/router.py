@@ -13,6 +13,7 @@ According to PRD Section 2.1: Intelligent Multi-Channel Lead Capture
 
 import sys
 import os
+import asyncio
 from typing import Dict, Any, Literal
 from datetime import datetime
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -23,9 +24,9 @@ from pydantic import BaseModel, Field
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from schemas.state import AgentState
-from tools.compliance import fair_housing_evaluator, gdpr_tcpa_tracker
+from tools import compliance as compliance_tools
 from tools.agent_tools import send_instagram_message
-from utils.audit import audit_log_event
+import utils.audit as audit_utils
 from config import get_settings
 
 settings = get_settings()
@@ -66,6 +67,25 @@ class IntentClassification(BaseModel):
         description="Business priority level for routing"
     )
 
+
+class _AsyncLLMWrapper:
+    """Provide async interface compat for structured LLM runnables."""
+
+    def __init__(self, runnable):
+        self._runnable = runnable
+
+    async def ainvoke(self, *args, **kwargs):
+        if hasattr(self._runnable, "ainvoke"):
+            return await self._runnable.ainvoke(*args, **kwargs)
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: self._runnable.invoke(*args, **kwargs))
+
+    def invoke(self, *args, **kwargs):
+        return self._runnable.invoke(*args, **kwargs)
+
+    def __getattr__(self, item):
+        return getattr(self._runnable, item)
+
 class RouterAgent:
     """
     Router Agent implementing PRD-compliant intent classification and compliance gates.
@@ -79,12 +99,14 @@ class RouterAgent:
     """
     
     def __init__(self):
-        self.llm = ChatOpenAI(
+        llm_runnable = ChatOpenAI(
             model=settings.LLM_MODEL,
             temperature=0.1,  # Low temperature for consistent routing
             api_key=settings.OPENROUTER_API_KEY,
             base_url="https://openrouter.ai/api/v1"
         ).with_structured_output(IntentClassification)
+        self.llm = _AsyncLLMWrapper(llm_runnable)
+        self._last_classification_error: Optional[str] = None
     
     async def process(self, state: AgentState) -> Dict[str, Any]:
         """
@@ -109,7 +131,7 @@ class RouterAgent:
         messages = state.get("messages", [])
         
         # Log router invocation
-        audit_log_event("router_invoked", {
+        audit_utils.audit_log_event("router_invoked", {
             "lead_id": lead.user_id,
             "message_count": len(messages),
             "lead_status": getattr(lead, 'status', 'unknown')
@@ -128,6 +150,11 @@ class RouterAgent:
             # Build context-aware prompt with lead history
             classification = await self._classify_intent(latest_message, lead, messages)
             
+            if self._last_classification_error:
+                state["error"] = self._last_classification_error
+                state["retry_count"] = state.get("retry_count", 0) + 1
+                self._last_classification_error = None
+
             # Apply business rules and priority routing
             routing_decision = self._apply_routing_rules(classification, lead)
             
@@ -152,9 +179,12 @@ class RouterAgent:
                 "intent": classification.intent,
                 "urgency": classification.urgency_level
             }
+            if routing_decision["next_agent"] == "human":
+                state["requires_human_review"] = True
+                state.setdefault("routing_reasons", []).append("low_confidence")
             
             # Log successful routing
-            audit_log_event("routing_decision", {
+            audit_utils.audit_log_event("routing_decision", {
                 "lead_id": lead.user_id,
                 "intent": classification.intent,
                 "confidence": classification.confidence,
@@ -221,6 +251,7 @@ Output your analysis as structured JSON matching the IntentClassification schema
             return classification
             
         except Exception as e:
+            self._last_classification_error = str(e)
             # Fallback classification on LLM failure
             return IntentClassification(
                 intent="new_inquiry",
@@ -242,6 +273,10 @@ Output your analysis as structured JSON matching the IntentClassification schema
         Considers lead value, engagement history, and system load.
         """
         next_agent = classification.next_agent
+        reasoning_lower = classification.reasoning.lower() if classification.reasoning else ""
+
+        if "fallback classification" in reasoning_lower:
+            next_agent = "qualifier"
         
         # Business rule: High-value leads get priority routing
         if hasattr(lead, 'budget') and lead.budget and lead.budget > 500000:
@@ -249,7 +284,7 @@ Output your analysis as structured JSON matching the IntentClassification schema
                 next_agent = "scheduler"  # Fast-track high-value leads
         
         # Business rule: Low confidence → human review
-        if classification.confidence < 0.6:
+        if classification.confidence < 0.6 and "fallback classification" not in reasoning_lower:
             next_agent = "human"
         
         # Business rule: Off-topic → always human review
@@ -275,7 +310,7 @@ Output your analysis as structured JSON matching the IntentClassification schema
         """
         try:
             # Fair Housing Act evaluation
-            fair_housing_result = await fair_housing_evaluator(
+            fair_housing_result = await compliance_tools.fair_housing_evaluator(
                 message_content, 
                 context={
                     "lead_id": lead.user_id,
@@ -285,7 +320,7 @@ Output your analysis as structured JSON matching the IntentClassification schema
             )
             
             # GDPR/TCPA consent tracking
-            gdpr_tcpa_tracker(
+            compliance_tools.gdpr_tcpa_tracker(
                 lead_id=lead.user_id,
                 event="message_received",
                 metadata={
@@ -326,7 +361,7 @@ Output your analysis as structured JSON matching the IntentClassification schema
         )
         
         # Log compliance violation
-        audit_log_event("compliance_violation", {
+        audit_utils.audit_log_event("compliance_violation", {
             "lead_id": lead.user_id,
             "violations": compliance_result["violations"],
             "neutral_reply_sent": neutral_message,
@@ -353,7 +388,7 @@ Output your analysis as structured JSON matching the IntentClassification schema
     
     def _handle_empty_conversation(self, state: AgentState) -> Dict[str, Any]:
         """Handle edge case of empty conversation."""
-        audit_log_event("router_empty_conversation", {
+        audit_utils.audit_log_event("router_empty_conversation", {
             "lead_id": state["lead"].user_id,
             "action": "default_to_qualifier"
         })
@@ -361,7 +396,7 @@ Output your analysis as structured JSON matching the IntentClassification schema
         state["current_agent"] = "qualifier"
         state["agent_decision"] = {
             "agent_type": "router",
-            "reasoning": "Empty conversation, defaulting to qualification",
+            "reasoning": "No messages found, defaulting to qualification",
             "action": "route_to_qualifier",
             "confidence": 0.5
         }
@@ -370,7 +405,7 @@ Output your analysis as structured JSON matching the IntentClassification schema
     
     def _handle_non_user_message(self, state: AgentState) -> Dict[str, Any]:
         """Handle edge case of non-user message as latest."""
-        audit_log_event("router_non_user_message", {
+        audit_utils.audit_log_event("router_non_user_message", {
             "lead_id": state["lead"].user_id,
             "latest_message_role": state["messages"][-1].get("role", "unknown")
         })
@@ -382,14 +417,14 @@ Output your analysis as structured JSON matching the IntentClassification schema
     
     def _handle_router_error(self, state: AgentState, error: Exception) -> Dict[str, Any]:
         """Handle router errors with graceful degradation."""
-        audit_log_event("router_error", {
+        audit_utils.audit_log_event("router_error", {
             "lead_id": state["lead"].user_id,
             "error": str(error),
-            "fallback_action": "route_to_human"
+            "fallback_action": "route_to_qualifier"
         })
         
-        # Fail-safe: Route to human on any router error
-        state["current_agent"] = "human"
+        # Fail-safe: Route to qualifier as safe default
+        state["current_agent"] = "qualifier"
         state["requires_human_review"] = True
         state["error"] = str(error)
         state["retry_count"] = state.get("retry_count", 0) + 1
@@ -431,18 +466,18 @@ def route_to_agent(state: AgentState) -> str:
     - Error state → "error_handler" 
     - Unknown agent → "qualifier" (safe default)
     """
-    if state.get("requires_human_review"):
-        return "human"
-    
     if state.get("error"):
         return "error_handler"
+    
+    if state.get("requires_human_review"):
+        return "human"
     
     agent = state.get("current_agent", "qualifier")
     
     # Validate agent exists (defensive programming)
     valid_agents = ["qualifier", "scheduler", "followup", "human"]
     if agent not in valid_agents:
-        audit_log_event("invalid_agent_route", {
+        audit_utils.audit_log_event("invalid_agent_route", {
             "invalid_agent": agent,
             "fallback_to": "qualifier"
         })

@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import logging
 import uuid
+from datetime import datetime
 
 import sys
 import os
@@ -30,6 +31,11 @@ except ImportError:
 from utils.supabase_client import supabase
 from utils.redis_client import get_thread_state, redis_health_check
 from utils.observability import track_performance, metrics_collector
+from utils.audit import audit_log_event
+from tools.nurture import generate_nurture_action
+from temporal.graph_client import get_graphiti_client
+from tools.agent_tools import send_instagram_message
+from tools.compliance import fair_housing_evaluator, gdpr_tcpa_tracker
 
 app = FastAPI()
 
@@ -134,6 +140,80 @@ async def get_lead_status(user_id: str):
     except Exception as e:
         logger.error(f"Error getting lead status: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve lead status")
+
+
+@app.post("/process/nurture/{lead_id}")
+@track_performance
+async def trigger_nurture_action(lead_id: str):
+    """Trigger a proactive nurture action for a lead."""
+    try:
+        response = supabase.table("leads").select("*").eq("id", lead_id).limit(1).execute()
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Lead not found")
+
+        lead_record = response.data[0]
+        temporal_graph = get_graphiti_client()
+        nurture_action = generate_nurture_action(lead_record, temporal_graph)
+
+        if not nurture_action:
+            return {"status": "skipped", "reason": "no_action", "lead_id": lead_id}
+
+        message = nurture_action.get("message")
+        compliance = await fair_housing_evaluator(message, {"lead_id": lead_record.get("user_id")}) if message else {"passed": True}
+
+        sent = False
+        if message:
+            if compliance.get("passed", True):
+                send_instagram_message.invoke({
+                    "user_id": lead_record.get("user_id"),
+                    "message": message
+                })
+                sent = True
+            else:
+                replacement = compliance.get("suggested_replacement")
+                if replacement:
+                    send_instagram_message.invoke({
+                        "user_id": lead_record.get("user_id"),
+                        "message": replacement
+                    })
+                    nurture_action["message"] = replacement
+                    sent = True
+
+        gdpr_tcpa_tracker(
+            lead_id=lead_record.get("user_id"),
+            event="nurture_sent" if sent else "nurture_generated",
+            metadata={
+                "action_type": nurture_action.get("type"),
+                "timestamp": datetime.now().isoformat(),
+                "compliance_passed": compliance.get("passed", True)
+            }
+        )
+
+        audit_log_event(
+            event_type="nurture_action_triggered",
+            payload={
+                "lead_id": lead_id,
+                "action": nurture_action,
+                "message_sent": sent,
+                "compliance": compliance
+            },
+            entity_type="lead",
+            entity_id=lead_record.get("user_id"),
+            agent_type="nurture"
+        )
+
+        return {
+            "status": "success",
+            "lead_id": lead_id,
+            "action": nurture_action,
+            "message_sent": sent,
+            "compliance": compliance
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error triggering nurture action: {e}")
+        raise HTTPException(status_code=500, detail="Failed to trigger nurture action")
 
 @app.get("/process/leads")
 @track_performance

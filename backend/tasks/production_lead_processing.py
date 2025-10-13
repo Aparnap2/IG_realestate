@@ -19,9 +19,12 @@ load_dotenv()
 
 # Import required modules
 from utils.supabase_client import supabase, query_properties_db, save_lead, get_config
-from utils.llm_client import get_llm_response
 from utils.redis_client import redis_client
 from models.lead import Lead
+from utils.audit import audit_log_event
+from tools.compliance import fair_housing_evaluator, gdpr_tcpa_tracker
+from temporal.graph_client import get_graphiti_client
+from utils.llm_client import extract_lead_info as llm_extract_lead_info
 
 class ProductionLeadProcessor:
     """Production-grade lead processor implementing PRD workflow"""
@@ -29,6 +32,7 @@ class ProductionLeadProcessor:
     def __init__(self):
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         self.model = "anthropic/claude-3.5-sonnet"
+        self.graph_client = get_graphiti_client()
     
     async def process_lead_message(self, user_id: str, message: str, channel: str) -> Dict[str, Any]:
         """
@@ -49,6 +53,7 @@ class ProductionLeadProcessor:
                 "channel": channel,
                 "message": message,
                 "status": "new",
+                "last_interaction_at": datetime.now().isoformat(),
                 "history": [
                     {
                         "message": message,
@@ -58,12 +63,47 @@ class ProductionLeadProcessor:
                     }
                 ]
             }
+
+            # Compliance logging for inbound message
+            gdpr_tcpa_tracker(
+                lead_id=user_id,
+                event="message_received",
+                metadata={
+                    "channel": channel,
+                    "message_length": len(message),
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+
+            audit_log_event(
+                event_type="instagram_message_received",
+                payload={
+                    "user_id": user_id,
+                    "channel": channel,
+                    "message": message
+                },
+                entity_type="lead",
+                entity_id=user_id,
+                agent_type="ingest"
+            )
             
             # Save lead to database
             saved_lead = save_lead(lead_data)
             lead_id = saved_lead.get("id")
+            if lead_id:
+                lead_data["id"] = lead_id
             
             print(f"✅ Lead created: {lead_id}")
+
+            await self._record_temporal_event(
+                lead_id=lead_id or user_id,
+                event_type="message",
+                event_data={
+                    "direction": "inbound",
+                    "channel": channel,
+                    "content": message
+                }
+            )
             
             # Step 2: Extract lead information using LLM
             extracted_info = await self.extract_lead_info(message)
@@ -111,6 +151,57 @@ class ProductionLeadProcessor:
             response_message = await self.generate_response_message(
                 extracted_info, db_results, qualification_result, next_agent
             )
+
+            response_message, compliance_meta = await self._apply_compliance_guardrails(
+                lead_identifier=lead_id or user_id,
+                user_id=user_id,
+                message=response_message,
+                lead_snapshot=lead_data
+            )
+
+            gdpr_tcpa_tracker(
+                lead_id=user_id,
+                event="message_sent",
+                metadata={
+                    "channel": channel,
+                    "message_length": len(response_message),
+                    "timestamp": datetime.now().isoformat(),
+                    "compliance_passed": compliance_meta.get("passed", True)
+                }
+            )
+
+            audit_log_event(
+                event_type="assistant_response",
+                payload={
+                    "lead_id": lead_id,
+                    "message": response_message,
+                    "next_agent": next_agent,
+                    "compliance": compliance_meta
+                },
+                entity_type="lead",
+                entity_id=user_id,
+                agent_type="router"
+            )
+
+            lead_data.setdefault("history", []).append({
+                "message": response_message,
+                "timestamp": datetime.now().isoformat(),
+                "agent": "assistant",
+                "details": compliance_meta.get("reason")
+            })
+            lead_data["last_interaction_at"] = datetime.now().isoformat()
+
+            await self._record_temporal_event(
+                lead_id=lead_id or user_id,
+                event_type="assistant_response",
+                event_data={
+                    "message": response_message,
+                    "next_agent": next_agent,
+                    "compliance": compliance_meta
+                }
+            )
+
+            save_lead(lead_data)
             
             # Step 7: Store state in Redis (LangGraph checkpointer simulation)
             try:
@@ -123,6 +214,7 @@ class ProductionLeadProcessor:
                     "db_results": db_results,
                     "qualification": qualification_result,
                     "next_agent": next_agent,
+                    "compliance": compliance_meta,
                     "timestamp": datetime.now().isoformat()
                 }
                 
@@ -220,6 +312,15 @@ class ProductionLeadProcessor:
         email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', message)
         if email_match:
             extracted['email'] = email_match.group()
+
+        try:
+            llm_enrichment = llm_extract_lead_info(message) or {}
+            for key, value in llm_enrichment.items():
+                if value in (None, "") or key == "other_details":
+                    continue
+                extracted.setdefault(key, value)
+        except Exception as llm_error:
+            print(f"⚠️ LLM extraction fallback used: {llm_error}")
         
         return extracted
     
@@ -336,6 +437,87 @@ class ProductionLeadProcessor:
         budget = lead_info.get("budget", 0)
         
         return score >= hitl_threshold or budget >= high_value_budget
+
+    async def _apply_compliance_guardrails(
+        self,
+        lead_identifier: str,
+        user_id: str,
+        message: str,
+        lead_snapshot: Dict[str, Any]
+    ) -> tuple[str, Dict[str, Any]]:
+        """Evaluate outbound message against compliance policies."""
+        try:
+            evaluation = await fair_housing_evaluator(
+                message,
+                context={
+                    "lead_id": lead_identifier,
+                    "budget": lead_snapshot.get("budget"),
+                    "location": lead_snapshot.get("location"),
+                    "channel": lead_snapshot.get("channel")
+                }
+            )
+        except Exception as compliance_error:
+            audit_log_event(
+                event_type="compliance_evaluation_error",
+                payload={"error": str(compliance_error)},
+                entity_type="lead",
+                entity_id=user_id,
+                agent_type="compliance"
+            )
+            # Fail-safe neutral response
+            fallback_message = (
+                "Thank you for reaching out! I'll connect you with our team who can share tailored "
+                "property options for you shortly."
+            )
+            return fallback_message, {
+                "passed": False,
+                "violations": ["evaluation_error"],
+                "reason": "Compliance evaluator unavailable",
+                "evaluator_version": "unknown"
+            }
+
+        passed = evaluation.get("passed", True)
+        safe_message = message if passed else evaluation.get("suggested_replacement") or message
+        violations = evaluation.get("violations", [])
+        reason = "Passed" if passed else " | ".join(
+            violation.get("explanation", "Policy violation") for violation in violations
+        ) or "Policy violation"
+
+        if not passed:
+            audit_log_event(
+                event_type="compliance_violation",
+                payload={
+                    "lead_id": lead_identifier,
+                    "violations": violations,
+                    "original_message": message,
+                    "replacement": safe_message
+                },
+                entity_type="lead",
+                entity_id=user_id,
+                agent_type="compliance"
+            )
+
+        return safe_message, {
+            "passed": passed,
+            "violations": violations,
+            "reason": reason,
+            "evaluator_version": evaluation.get("evaluator_version")
+        }
+
+    async def _record_temporal_event(self, lead_id: str, event_type: str, event_data: Dict[str, Any]) -> None:
+        """Record lead interaction in temporal knowledge graph."""
+        if not self.graph_client:
+            return
+
+        try:
+            await self.graph_client.record_lead_event(
+                lead_id=lead_id,
+                event_type=event_type,
+                event_data=event_data,
+                timestamp=datetime.now()
+            )
+        except Exception as graph_error:
+            print(f"⚠️ Temporal graph unavailable: {graph_error}")
 
 # Global processor instance
 processor = ProductionLeadProcessor()

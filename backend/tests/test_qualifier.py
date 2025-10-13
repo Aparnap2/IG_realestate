@@ -31,7 +31,7 @@ def sample_state(sample_lead):
 
 @patch('agents.qualifier.get_config', side_effect=lambda key, default: default)
 @patch('agents.qualifier.query_properties_db')
-@patch('agents.qualifier.get_llm_response')
+@patch('agents.qualifier.get_llm_response_sync')
 @patch('agents.qualifier.cache_query_result')
 def test_qualifier_node(mock_cache, mock_llm, mock_db, mock_get_config, sample_state):
     # Mock the database response
@@ -61,7 +61,7 @@ def test_qualifier_node(mock_cache, mock_llm, mock_db, mock_get_config, sample_s
 
 @patch('agents.qualifier.get_config')
 @patch('agents.qualifier.query_properties_db')
-@patch('agents.qualifier.get_llm_response')
+@patch('agents.qualifier.get_llm_response_sync')
 @patch('agents.qualifier.cache_query_result')
 def test_qualifier_node_with_dynamic_threshold(mock_cache, mock_llm, mock_db, mock_get_config, sample_state):
     # Mock the database response

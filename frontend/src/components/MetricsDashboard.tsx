@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useLeads } from '@/hooks/useLeads'
 
@@ -14,6 +15,17 @@ const mockMetrics = {
 export function MetricsDashboard() {
   const { leads } = useLeads()
   const [metrics, setMetrics] = useState(mockMetrics)
+  const backendUrl = import.meta.env.VITE_BACKEND_URL
+
+  const { data: funnelMetrics } = useQuery({
+    queryKey: ['analytics', 'funnel'],
+    queryFn: async () => {
+      const response = await fetch(`${backendUrl}/api/analytics/funnel?days=30`)
+      if (!response.ok) throw new Error('Failed to load funnel metrics')
+      return response.json() as Promise<{ overall_conversion_rate: number }>
+    },
+    enabled: Boolean(backendUrl)
+  })
 
   useEffect(() => {
     if (leads && leads.length > 0) {
@@ -29,11 +41,11 @@ export function MetricsDashboard() {
         totalLeads,
         qualifiedLeads,
         scheduledMeetings,
-        conversionRate: parseFloat(conversionRate.toFixed(1)),
+        conversionRate: funnelMetrics?.overall_conversion_rate ?? parseFloat(conversionRate.toFixed(1)),
         avgQualificationScore: parseFloat(avgQualificationScore.toFixed(2))
       })
     }
-  }, [leads])
+  }, [leads, funnelMetrics])
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">

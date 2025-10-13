@@ -9,7 +9,7 @@ import asyncio
 from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime
 
-from agents.router import RouterAgent, route_to_agent, IntentClassification
+from backend.agents.router import RouterAgent, route_to_agent, IntentClassification
 from models.lead import Lead
 
 

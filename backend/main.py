@@ -20,6 +20,7 @@ try:
     from api.webhooks import app as webhooks_app
     from api.health import router as health_router
     from api.companies import router as companies_router
+    from api.analytics import router as analytics_router
 except ImportError as e:
     print(f"Import error: {e}")
     # Create fallback apps
@@ -31,6 +32,7 @@ except ImportError as e:
     from fastapi import APIRouter
     health_router = APIRouter()
     companies_router = APIRouter()
+    analytics_router = APIRouter()
     
     @health_router.get("/health")
     async def health():
@@ -39,6 +41,10 @@ except ImportError as e:
     @companies_router.get("/api/companies")
     async def list_companies():
         return {"companies": []}
+
+    @analytics_router.get("/api/analytics/health")
+    async def analytics_health():
+        return {"status": "unavailable", "service": "analytics"}
 
 try:
     from middleware.multi_tenant_auth import (
@@ -112,6 +118,7 @@ app.mount("/hitl", hitl_app)
 # Include routers
 app.include_router(health_router, prefix="/api")
 app.include_router(companies_router)
+app.include_router(analytics_router)
 
 @app.get("/")
 async def root(request: Request):

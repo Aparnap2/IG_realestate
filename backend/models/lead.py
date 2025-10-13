@@ -19,11 +19,16 @@ class Lead(BaseModel):
     location: Optional[str] = Field(None, description="Desired location (e.g., 'Miami')")
     property_type: Optional[str] = Field(None, description="Property type (e.g., '2BHK', 'Condo')")
     timeline: Optional[str] = Field(None, description="Timeline (e.g., '3 months')")
+    desired_bedrooms: Optional[int] = Field(None, description="Preferred bedroom count")
     name: Optional[str] = Field(None, description="Lead's name")
     email: Optional[str] = Field(None, description="Lead's email")
     meeting_slot: Optional[datetime] = Field(None, description="Scheduled meeting time")
     status: str = Field(default="new", description="Status: new/qualified/scheduled/booked")
     history: List[Dict[str, Any]] = Field(default_factory=list, description="Conversation history")
+    last_interaction_at: Optional[datetime] = Field(None, description="Timestamp of last interaction")
+    tcpa_opt_in: Optional[bool] = Field(None, description="TCPA opt-in status")
+    consent_timestamp: Optional[datetime] = Field(None, description="Timestamp of latest consent update")
+    notes: Optional[str] = Field(None, description="Unstructured notes captured during processing")
     created_at: datetime = Field(default_factory=datetime.now)
     
     class Config:

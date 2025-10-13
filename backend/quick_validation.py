@@ -30,7 +30,7 @@ def validate_core_components():
     
     # Test 2: Router Agent (import only)
     try:
-        from agents.router import RouterAgent, route_to_agent
+        from backend.agents.router import RouterAgent, route_to_agent
         results["Router Agent"] = "✅ PASS"
         print("✅ Router Agent: Import successful")
     except Exception as e:
@@ -85,7 +85,7 @@ def validate_core_components():
     
     # Test 8: Enhanced Agents
     try:
-        from agents.prd_compliant_workflow import QualifierAgent, SchedulerAgent, FollowUpAgent
+        from backend.agents.prd_compliant_workflow import QualifierAgent, SchedulerAgent, FollowUpAgent
         results["Enhanced Agents"] = "✅ PASS"
         print("✅ Enhanced Agents: Import successful")
     except Exception as e:

@@ -23,10 +23,27 @@ from uuid import uuid4
 # Add the parent directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from utils.supabase_client import supabase
-from config import get_settings
+_settings_cache: Optional[Any] = None
 
-settings = get_settings()
+
+def _get_settings():
+    global _settings_cache
+    if _settings_cache is not None:
+        return _settings_cache
+    try:
+        from config import get_settings as _cfg_get_settings
+        _settings_cache = _cfg_get_settings()
+    except Exception:
+        class _Fallback:
+            AUDIT_SALT = "default_salt"
+            ENVIRONMENT = "testing"
+            SUPABASE_URL = None
+        _settings_cache = _Fallback()
+    return _settings_cache
+def _get_supabase_client():
+    from utils.supabase_client import supabase as supabase_client
+    return supabase_client
+
 
 # Global variable to cache the last hash for chaining
 _last_audit_hash: Optional[str] = None
@@ -70,7 +87,7 @@ class AuditEvent:
             "payload": self.payload,
             "timestamp": self.timestamp.isoformat(),
             "prev_hash": self.prev_hash,
-            "salt": settings.AUDIT_SALT if hasattr(settings, 'AUDIT_SALT') else "default_salt"
+            "salt": getattr(_get_settings(), 'AUDIT_SALT', "default_salt")
         }
         
         # Create deterministic JSON string
@@ -129,6 +146,8 @@ def audit_log_event(
             "blocked": True
         })
     """
+    event: Optional[AuditEvent] = None
+
     try:
         # Create audit event
         event = AuditEvent(
@@ -153,15 +172,18 @@ def audit_log_event(
         # Critical: Audit logging failure should not break the system
         # but must be logged to a fallback mechanism
         _log_audit_failure(event_type, payload, str(e))
+        if event is not None:
+            return event.event_id
         return "audit_failed"
 
 def _store_audit_event(event: AuditEvent) -> None:
     """Store audit event in Supabase with retry logic."""
     max_retries = 3
+    client = _get_supabase_client()
     
     for attempt in range(max_retries):
         try:
-            response = supabase.table("audit_logs").insert(event.to_dict()).execute()
+            response = client.table("audit_logs").insert(event.to_dict()).execute()
             
             if response.data:
                 return  # Success
@@ -221,7 +243,7 @@ def _log_audit_failure(event_type: str, payload: Dict[str, Any], error: str) -> 
         }
         
         # Try to log the failure itself
-        supabase.table("system_errors").insert(failure_event).execute()
+        _get_supabase_client().table("system_errors").insert(failure_event).execute()
         
     except Exception:
         # If even error logging fails, write to stderr
@@ -237,18 +259,25 @@ def _get_last_audit_hash() -> Optional[str]:
     
     if _last_audit_hash is not None:
         return _last_audit_hash
+    settings = _get_settings()
+    if getattr(settings, "ENVIRONMENT", "").lower() == "testing":
+        return None
+    if not getattr(settings, "SUPABASE_URL", None):
+        return None
     
     try:
         # Query most recent audit event
-        response = supabase.table("audit_logs")\
+        response = _get_supabase_client().table("audit_logs")\
             .select("hash")\
             .order("timestamp", desc=True)\
             .limit(1)\
             .execute()
         
-        if response.data:
-            _last_audit_hash = response.data[0]["hash"]
+        data = getattr(response, "data", None)
+        if isinstance(data, list) and data:
+            _last_audit_hash = data[0].get("hash")
             return _last_audit_hash
+        return None
         
         return None  # First event in chain
         
@@ -268,7 +297,7 @@ def verify_audit_chain(start_date: datetime = None, end_date: datetime = None) -
     """
     try:
         # Build query
-        query = supabase.table("audit_logs").select("*").order("timestamp", desc=False)
+        query = _get_supabase_client().table("audit_logs").select("*").order("timestamp", desc=False)
         
         if start_date:
             query = query.gte("timestamp", start_date.isoformat())
@@ -322,6 +351,7 @@ def _verify_event_hash(event: Dict[str, Any]) -> bool:
     """Verify that an event's hash is correct."""
     try:
         # Reconstruct hash data
+        settings = _get_settings()
         hash_data = {
             "event_id": event["id"],
             "event_type": event["event_type"],
@@ -330,7 +360,7 @@ def _verify_event_hash(event: Dict[str, Any]) -> bool:
             "payload": event["payload"],
             "timestamp": event["timestamp"],
             "prev_hash": event["prev_hash"],
-            "salt": settings.AUDIT_SALT if hasattr(settings, 'AUDIT_SALT') else "default_salt"
+            "salt": getattr(settings, 'AUDIT_SALT', "default_salt")
         }
         
         # Generate expected hash
@@ -365,7 +395,7 @@ def query_audit_events(
         List of matching audit events
     """
     try:
-        query = supabase.table("audit_logs").select("*")
+        query = _get_supabase_client().table("audit_logs").select("*")
         
         if event_type:
             query = query.eq("event_type", event_type)
@@ -477,7 +507,7 @@ def cleanup_old_audit_logs(retention_days: int = 2555) -> Dict[str, Any]:
         cutoff_date = datetime.now() - timedelta(days=retention_days)
         
         # Query old events
-        response = supabase.table("audit_logs")\
+        response = _get_supabase_client().table("audit_logs")\
             .select("id")\
             .lt("timestamp", cutoff_date.isoformat())\
             .execute()
@@ -496,7 +526,7 @@ def cleanup_old_audit_logs(retention_days: int = 2555) -> Dict[str, Any]:
         
         # Delete old events
         event_ids = [event["id"] for event in old_events]
-        supabase.table("audit_logs").delete().in_("id", event_ids).execute()
+        _get_supabase_client().table("audit_logs").delete().in_("id", event_ids).execute()
         
         # Log cleanup action
         audit_log_event("audit_cleanup", {

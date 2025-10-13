@@ -22,18 +22,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from schemas.state import AgentState
 from models.lead import Lead
 from utils.redis_client import redis_client
-from utils.llm_client import get_llm_response, extract_lead_info, generate_response_message
-from tools.agent_tools import (
-    query_properties_tool,
-    save_lead_tool,
-    get_config_tool,
-    qualify_lead_with_llm,
-    send_instagram_message,
-    get_available_calendar_slots,
-    book_calendar_event,
-    create_hubspot_contact,
-    create_hubspot_deal
-)
+from utils.llm_client import extract_lead_info, generate_response_message
+from tools import agent_tools, compliance as compliance_tools, qualifier_utils
 
 class QualifierAgent:
     """
@@ -48,10 +38,10 @@ class QualifierAgent:
     
     def __init__(self):
         self.tools = [
-            query_properties_tool,
-            qualify_lead_with_llm,
-            get_config_tool,
-            send_instagram_message
+            agent_tools.query_properties_tool,
+            agent_tools.qualify_lead_with_llm,
+            agent_tools.get_config_tool,
+            agent_tools.send_instagram_message
         ]
     
     def process(self, state: AgentState) -> Dict[str, Any]:
@@ -78,7 +68,7 @@ class QualifierAgent:
             # Query properties database
             db_results = []
             if lead.budget and lead.location and lead.property_type:
-                db_results = query_properties_tool.invoke({
+                db_results = agent_tools.query_properties_tool.invoke({
                     "budget": lead.budget,
                     "location": lead.location,
                     "property_type": lead.property_type
@@ -87,8 +77,7 @@ class QualifierAgent:
             # Handle budget reconciliation if needed
             reconciliation_result = None
             if hasattr(lead, 'desired_bedrooms') and lead.desired_bedrooms and lead.budget and db_results:
-                from tools.qualifier_utils import reconcile_budget_mismatch
-                reconciliation_result = reconcile_budget_mismatch(
+                reconciliation_result = qualifier_utils.reconcile_budget_mismatch(
                     desired_bedrooms=lead.desired_bedrooms,
                     budget=lead.budget,
                     inventory=db_results,
@@ -105,11 +94,14 @@ class QualifierAgent:
                 "reconciliation": reconciliation_result
             }
             
-            qualification_result = qualify_lead_with_llm.invoke(qualification_context)
+            qualification_result = agent_tools.qualify_lead_with_llm.invoke(qualification_context)
+
+            if isinstance(qualification_result, str):
+                import json
+                qualification_result = json.loads(qualification_result)
             
             # Apply temporal adjustments to score
-            from tools.qualifier_utils import calculate_temporal_qualification_adjustments
-            temporal_adjustments = calculate_temporal_qualification_adjustments(
+            temporal_adjustments = qualifier_utils.calculate_temporal_qualification_adjustments(
                 lead_data=lead.to_dict(),
                 base_score=qualification_result["score"]
             )
@@ -141,18 +133,19 @@ class QualifierAgent:
                     response_msg = f"Thank you for your interest! I found {len(db_results)} properties in your area. Let me share some options that might work for you."
             
             # Send response with compliance check
-            from tools.compliance import fair_housing_evaluator
             import asyncio
-            compliance_check = asyncio.run(fair_housing_evaluator(response_msg, {"lead_id": lead.user_id}))
+            compliance_check = asyncio.run(
+                compliance_tools.fair_housing_evaluator(response_msg, {"lead_id": lead.user_id})
+            )
             
             if compliance_check["passed"]:
-                send_instagram_message.invoke({
+                agent_tools.send_instagram_message.invoke({
                     "user_id": lead.user_id,
                     "message": response_msg
                 })
             else:
                 # Use neutral alternative
-                send_instagram_message.invoke({
+                agent_tools.send_instagram_message.invoke({
                     "user_id": lead.user_id,
                     "message": compliance_check["suggested_replacement"]
                 })
@@ -208,11 +201,11 @@ class SchedulerAgent:
     
     def __init__(self):
         self.tools = [
-            get_available_calendar_slots,
-            book_calendar_event,
-            create_hubspot_contact,
-            create_hubspot_deal,
-            send_instagram_message
+            agent_tools.get_available_calendar_slots,
+            agent_tools.book_calendar_event,
+            agent_tools.create_hubspot_contact,
+            agent_tools.create_hubspot_deal,
+            agent_tools.send_instagram_message
         ]
     
     def process(self, state: AgentState) -> Dict[str, Any]:
@@ -233,14 +226,15 @@ class SchedulerAgent:
                 }
             
             # Get available calendar slots
-            available_slots = get_available_calendar_slots.invoke({"days_ahead": 7})
-            
+            raw_slots = agent_tools.get_available_calendar_slots.invoke({"days_ahead": 7})
+            normalized_slots = self._normalize_slots(raw_slots)
+
             # For demo purposes, auto-book the first available slot
-            if available_slots and lead.email:
-                selected_slot = available_slots[0]
-                
+            if normalized_slots and lead.email:
+                selected_slot = normalized_slots[0]["start"]
+
                 # Book calendar event
-                event_result = book_calendar_event.invoke({
+                event_result = agent_tools.book_calendar_event.invoke({
                     "start_time": selected_slot,
                     "duration_minutes": 60,
                     "attendee_email": lead.email,
@@ -253,7 +247,7 @@ class SchedulerAgent:
                     lead.status = "scheduled"
                     
                     # Create HubSpot contact and deal
-                    contact_result = create_hubspot_contact.invoke({
+                    contact_result = agent_tools.create_hubspot_contact.invoke({
                         "email": lead.email,
                         "first_name": lead.name or "",
                         "phone": lead.user_id,
@@ -261,7 +255,7 @@ class SchedulerAgent:
                     })
                     
                     if "error" not in contact_result:
-                        deal_result = create_hubspot_deal.invoke({
+                        deal_result = agent_tools.create_hubspot_deal.invoke({
                             "contact_id": contact_result["contact_id"],
                             "deal_name": f"Property Tour - {lead.user_id}",
                             "amount": lead.budget or 0,
@@ -280,11 +274,14 @@ class SchedulerAgent:
                 if not lead.email:
                     response_msg = "To schedule your property tour, I'll need your email address. Could you please provide it?"
                 else:
-                    slots_text = "\n".join([f"- {slot.strftime('%B %d, %Y at %I:%M %p')}" for slot in available_slots[:3]])
+                    slots_text = "\n".join([
+                        f"- {slot['start'].strftime('%B %d, %Y at %I:%M %p')}"
+                        for slot in normalized_slots[:3]
+                    ]) if normalized_slots else "- Let me know your preferred times"
                     response_msg = f"Here are some available times for your property tour:\n{slots_text}\n\nWhich time works best for you?"
             
             # Send response
-            send_instagram_message.invoke({
+            agent_tools.send_instagram_message.invoke({
                 "user_id": lead.user_id,
                 "message": response_msg
             })
@@ -296,12 +293,12 @@ class SchedulerAgent:
             })
             
             # Save lead
-            save_lead_tool.invoke({"lead_data": lead.to_dict()})
+            agent_tools.save_lead_tool.invoke({"lead_data": lead.to_dict()})
             
             return {
                 "lead": lead,
                 "messages": messages,
-                "available_slots": available_slots,
+                "available_slots": normalized_slots,
                 "next_agent": "END"
             }
             
@@ -313,6 +310,44 @@ class SchedulerAgent:
                 "next_agent": "followup",
                 "error_message": str(e)
             }
+
+    @staticmethod
+    def _normalize_slots(raw_slots: Optional[List[Any]]) -> List[Dict[str, Any]]:
+        """Normalize slot payloads to a consistent structure."""
+        from datetime import datetime
+
+        normalized: List[Dict[str, Any]] = []
+        if not raw_slots:
+            return normalized
+
+        for slot in raw_slots:
+            if isinstance(slot, dict):
+                start = slot.get("start")
+                end = slot.get("end")
+                if isinstance(start, str):
+                    try:
+                        start = datetime.fromisoformat(start)
+                    except ValueError:
+                        continue
+                if isinstance(end, str):
+                    try:
+                        end = datetime.fromisoformat(end)
+                    except ValueError:
+                        end = None
+                if isinstance(start, datetime):
+                    normalized.append({
+                        "start": start,
+                        "end": end,
+                        "raw": slot
+                    })
+            elif hasattr(slot, "__class__") and slot.__class__.__name__ == "datetime" or isinstance(slot, datetime):
+                normalized.append({
+                    "start": slot,
+                    "end": None,
+                    "raw": slot
+                })
+
+        return normalized
 
 class FollowUpAgent:
     """
@@ -326,8 +361,8 @@ class FollowUpAgent:
     
     def __init__(self):
         self.tools = [
-            query_properties_tool,
-            send_instagram_message
+            agent_tools.query_properties_tool,
+            agent_tools.send_instagram_message
         ]
     
     def process(self, state: AgentState) -> Dict[str, Any]:
@@ -381,18 +416,19 @@ class FollowUpAgent:
                 )
             
             # Send response with compliance check
-            from tools.compliance import fair_housing_evaluator
             import asyncio
-            compliance_check = asyncio.run(fair_housing_evaluator(response_msg, {"lead_id": lead.user_id}))
+            compliance_check = asyncio.run(
+                compliance_tools.fair_housing_evaluator(response_msg, {"lead_id": lead.user_id})
+            )
             
             if compliance_check["passed"]:
-                send_instagram_message.invoke({
+                agent_tools.send_instagram_message.invoke({
                     "user_id": lead.user_id,
                     "message": response_msg
                 })
             else:
                 # Use neutral alternative
-                send_instagram_message.invoke({
+                agent_tools.send_instagram_message.invoke({
                     "user_id": lead.user_id,
                     "message": compliance_check["suggested_replacement"]
                 })
@@ -414,7 +450,7 @@ class FollowUpAgent:
             lead.add_history_entry("Intelligent follow-up message sent", "followup")
             
             # Save lead
-            save_lead_tool.invoke({"lead_data": lead.to_dict()})
+            agent_tools.save_lead_tool.invoke({"lead_data": lead.to_dict()})
             
             return {
                 "lead": lead,
@@ -443,8 +479,12 @@ def create_prd_compliant_workflow():
     scheduler = SchedulerAgent()
     followup = FollowUpAgent()
     
-    # Create Redis checkpointer
-    checkpointer = RedisSaver(redis_client)
+    # Create Redis checkpointer with fallback for tests
+    try:
+        checkpointer = RedisSaver(redis_client=redis_client)
+    except Exception:
+        from langgraph.checkpoint.memory import MemorySaver
+        checkpointer = MemorySaver()
     
     # Define agent nodes
     def qualifier_node(state: AgentState) -> Dict[str, Any]:

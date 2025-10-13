@@ -191,7 +191,7 @@ class TestSchedulingIntegration:
     
     def test_scheduler_agent_integration(self, mock_settings, mock_audit):
         """Test scheduler agent integration with scheduling tools."""
-        from agents.prd_compliant_workflow import SchedulerAgent
+        from backend.agents.prd_compliant_workflow import SchedulerAgent
         
         scheduler = SchedulerAgent()
         

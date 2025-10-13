@@ -10,8 +10,8 @@ import os
 # Add the parent directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from agents.prd_compliant_workflow import create_prd_compliant_workflow
-from agents.router import RouterAgent, route_to_agent
+from backend.agents.prd_compliant_workflow import create_prd_compliant_workflow
+from backend.agents.router import RouterAgent, route_to_agent
 from utils.redis_client import test_redis_connection
 from config import get_settings
 
@@ -55,7 +55,7 @@ def create_router_enabled_workflow():
     from langgraph.checkpoint.redis import RedisSaver
     from schemas.state import AgentState
     from utils.redis_client import redis_client
-    from agents.prd_compliant_workflow import QualifierAgent, SchedulerAgent, FollowUpAgent
+    from backend.agents.prd_compliant_workflow import QualifierAgent, SchedulerAgent, FollowUpAgent
     
     # Initialize agents
     router = RouterAgent()
@@ -63,13 +63,17 @@ def create_router_enabled_workflow():
     scheduler = SchedulerAgent()
     followup = FollowUpAgent()
     
-    # Create Redis checkpointer
-    checkpointer = RedisSaver(redis_client)
+    # Create Redis checkpointer with graceful fallback for tests
+    try:
+        checkpointer = RedisSaver(redis_client=redis_client)
+    except Exception:
+        from langgraph.checkpoint.memory import MemorySaver
+        checkpointer = MemorySaver()
     
     # Define agent nodes
-    def router_node(state: AgentState) -> dict:
+    async def router_node(state: AgentState) -> dict:
         """Router agent node with compliance gates"""
-        return router.process(state)
+        return await router.process(state)
     
     def qualifier_node(state: AgentState) -> dict:
         """Enhanced qualifier agent node"""

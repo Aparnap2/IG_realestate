@@ -296,7 +296,7 @@ class TestComplianceIntegration:
     @pytest.mark.asyncio
     async def test_compliance_with_router_agent(self, mock_audit):
         """Test compliance integration with router agent."""
-        from agents.router import RouterAgent
+        from backend.agents.router import RouterAgent
         
         router = RouterAgent()
         

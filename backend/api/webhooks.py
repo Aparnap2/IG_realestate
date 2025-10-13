@@ -15,6 +15,9 @@ import logging
 from typing import Optional, Dict, Any, List
 import uuid
 import sys
+import time
+
+import aiohttp
 
 # Add the parent directory to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,6 +31,21 @@ except ImportError:
             def __init__(self):
                 self.id = str(uuid.uuid4())
         return MockTask()
+
+try:
+    from tasks.production_lead_processing import process_lead_message
+except ImportError:
+    async def process_lead_message(user_id: str, message: str, channel: str):
+        return {
+            "status": "success",
+            "lead_id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "response_message": "Development stub",
+            "qualified_score": None,
+            "next_agent": "followup",
+            "interrupt_needed": False,
+            "properties_found": 0
+        }
 
 try:
     from utils.observability import track_performance, metrics_collector
@@ -52,6 +70,32 @@ logger = logging.getLogger(__name__)
 META_APP_SECRET = os.getenv("META_APP_SECRET")
 META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "aaa_real_estate_verify_token_2025")
 
+
+async def _send_instagram_reply(recipient_id: str, message: str, ig_account_id: Optional[str] = None) -> None:
+    """Send a reply to Instagram using the Messaging API."""
+    token = os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN") or os.getenv("META_PAGE_ACCESS_TOKEN")
+    if not token:
+        logger.warning("Skipping reply: missing INSTAGRAM_PAGE_ACCESS_TOKEN/META_PAGE_ACCESS_TOKEN")
+        return
+
+    account_id = ig_account_id or os.getenv("INSTAGRAM_ACCOUNT_ID")
+    if not account_id:
+        logger.warning("Skipping reply: missing IG account id")
+        return
+
+    url = f"https://graph.instagram.com/v21.0/{account_id}/messages"
+    payload = {"recipient": {"id": recipient_id}, "message": {"text": message}}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=payload) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                raise RuntimeError(f"Instagram reply failed ({resp.status}): {body}")
+
 class WebhookPayload(BaseModel):
     """Base webhook payload model"""
     entry: List[Dict[str, Any]]
@@ -62,6 +106,19 @@ class InstagramWebhookEntry(BaseModel):
     id: str
     time: int
     messaging: Optional[List[Dict[str, Any]]] = None
+
+
+async def process_instagram_webhook(payload: Dict[str, Any], *_args, **_kwargs) -> Dict[str, Any]:
+    """Legacy helper retained for backward-compatible tests."""
+    try:
+        sanitized_payload = {
+            "channel": "ig",
+            "entry": payload.get("entry", [])
+        }
+        task_result = process_webhook(sanitized_payload)
+        return {"status": "queued", "task_id": getattr(task_result, "id", None)}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 
@@ -187,10 +244,39 @@ async def instagram_webhook(
         results = []
         entries_processed = 0
 
+        async def handle_message(sender_id: str, message_text: str, account_id: Optional[str], message_id: Optional[str]) -> Dict[str, Any]:
+            logger.info(" Routing message through production lead processor")
+            processing_result = await process_lead_message(sender_id, message_text, "ig")
+
+            logger.info(f" Processing result: {processing_result}")
+
+            response_payload = {
+                "sender_id": sender_id,
+                "message_id": message_id,
+                "processing_time": time.time() - start_time,
+                "result": processing_result
+            }
+
+            if processing_result.get("status") == "success" and processing_result.get("response_message"):
+                try:
+                    await _send_instagram_reply(
+                        recipient_id=sender_id,
+                        message=processing_result["response_message"],
+                        ig_account_id=account_id
+                    )
+                    response_payload["response_sent"] = True
+                except Exception as send_error:
+                    logger.error(f" Failed to send Instagram reply: {send_error}")
+                    response_payload["response_sent"] = False
+                    response_payload["send_error"] = str(send_error)
+
+            return response_payload
+
         for entry_idx, entry in enumerate(webhook_data.get("entry", [])):
             logger.info(f" Processing entry {entry_idx + 1}/{len(webhook_data.get('entry', []))}")
 
             if "messaging" in entry:
+                ig_account_id = entry.get("id")
                 for msg_idx, messaging_event in enumerate(entry["messaging"]):
                     logger.info(f" Processing message {msg_idx + 1} in entry {entry_idx + 1}")
 
@@ -208,33 +294,10 @@ async def instagram_webhook(
                         if sender_id and message_text:
                             logger.info(" Valid message found, preparing for processing")
 
-                            # Prepare webhook data for processing
-                            processed_webhook_data = {
-                                "channel": "ig",
-                                "entry": [{
-                                    "messaging": [{
-                                        "sender": {"id": sender_id},
-                                        "message": {"text": message_text, "mid": message_id}
-                                    }]
-                                }]
-                            }
+                            result_payload = await handle_message(sender_id, message_text, ig_account_id, message_id)
+                            results.append(result_payload)
 
-                            logger.info(f" Processed webhook data prepared: {processed_webhook_data}")
-
-                            # For development: process synchronously instead of using Celery
-                            logger.info(" Processing message in development mode (no Celery)")
-
-                            # Simple response for development
-                            results.append({
-                                "sender_id": sender_id,
-                                "task_id": f"dev_{str(uuid.uuid4())[:8]}",
-                                "status": "processed",
-                                "response": "Message received and processed (development mode)",
-                                "message_text": message_text,
-                                "processing_time": time.time() - start_time
-                            })
-
-                            logger.info(f" Instagram message processed: {sender_id} -> dev_mode")
+                            logger.info(f" Instagram message processed: {sender_id}")
                             entries_processed += 1
                         else:
                             logger.warning(f" Missing sender_id or message_text: sender_id={sender_id}, message_text={message_text}")

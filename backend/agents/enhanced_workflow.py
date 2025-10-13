@@ -12,7 +12,7 @@ import json
 
 from backend.utils.redis_client import redis_client
 from backend.utils.supabase_client import query_properties_db, save_lead, get_config
-from backend.utils.llm_client import get_llm_response
+from backend.utils.llm_client import get_llm_response_sync
 from backend.models.lead import Lead
 from backend.schemas.state import AgentState
 
@@ -126,7 +126,7 @@ def qualify_lead_tool(lead: Lead, properties: List[Dict[str, Any]]) -> Qualifica
     }}
     """
     
-    response = get_llm_response(prompt)
+    response = get_llm_response_sync(prompt)
     
     try:
         score_data = json.loads(response)

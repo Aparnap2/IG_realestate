@@ -6,7 +6,7 @@ from datetime import datetime
 # Add the parent directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from utils.llm_client import get_llm_response
+from utils.llm_client import get_llm_response_sync
 from utils.supabase_client import query_properties_db, get_config, save_lead
 from utils.redis_client import cache_query_result, get_cached_query_result
 from tools.handoffs import handoff_to_scheduler, handoff_to_followup
@@ -98,7 +98,7 @@ def qualifier_node(state: AgentState) -> Dict[str, Any]:
     """
     
     # Get LLM response
-    score_response = get_llm_response(prompt)
+    score_response = get_llm_response_sync(prompt)
     
     # Parse the score from JSON response
     try:
