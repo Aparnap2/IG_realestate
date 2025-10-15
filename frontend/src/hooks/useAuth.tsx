@@ -16,13 +16,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // TEMPORARY: Auto-login for testing
-    const mockUser = {
-      id: 'dev-user-123',
-      email: 'dev@test.com',
-      user_metadata: { name: 'Dev User' }
+    // Check if we're in E2E testing mode - don't auto-login
+    const isE2ETesting = window.location.search.includes('e2e=true') ||
+                        process.env.NODE_ENV === 'test' ||
+                        localStorage.getItem('e2e_testing') === 'true';
+    
+    if (!isE2ETesting) {
+      // TEMPORARY: Auto-login for development (not testing)
+      const mockUser = {
+        id: 'dev-user-123',
+        email: 'dev@test.com',
+        user_metadata: { name: 'Dev User' }
+      }
+      setUser(mockUser as any)
+      setLoading(false)
+      return
     }
-    setUser(mockUser as any)
+    
+    // For E2E testing, don't auto-login
     setLoading(false)
     
     /* RESTORE THIS WHEN AUTH IS READY

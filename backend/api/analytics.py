@@ -44,8 +44,8 @@ def get_conversion_funnel(days: int = 30):
 
 
 @router.get("/roi")
-def get_roi_metrics(days: int = 90):
+def get_roi_metrics(days: int = 90, operational_cost: float = None):
     try:
-        return calculate_roi_metrics(time_period_days=days)
+        return calculate_roi_metrics(time_period_days=days, operational_cost=operational_cost)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc

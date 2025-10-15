@@ -125,7 +125,7 @@ def main():
     print("=" * 50)
     print(f"Testing server at: {BASE_URL}")
     print("\nMake sure the server is running:")
-    print("  python instagram_webhook_server.py")
+    print("  cd backend && python -m uvicorn api.webhooks:app --reload --host 0.0.0.0 --port 8000")
     print("=" * 50)
     
     try:
@@ -133,7 +133,7 @@ def main():
         requests.get(f"{BASE_URL}/health", timeout=2)
     except requests.exceptions.ConnectionError:
         print("\n❌ ERROR: Server is not running!")
-        print("Start the server first: python instagram_webhook_server.py")
+        print("Start the server first: cd backend && python -m uvicorn api.webhooks:app --reload --host 0.0.0.0 --port 8000")
         sys.exit(1)
     
     tests = [

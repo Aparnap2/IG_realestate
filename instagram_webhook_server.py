@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-Production Instagram DM Automation Server
-Following the exact guide provided for Instagram Messaging API integration.
+LEGACY - Production Instagram DM Automation Server
 
+⚠️  DEPRECATED: This file is marked as legacy and will be removed in a future release.
+Please use the canonical webhook implementation at backend/api/webhooks.py instead.
+
+Following the exact guide provided for Instagram Messaging API integration.
 This implements the complete PRD workflow with proper Instagram webhook handling.
 """
 

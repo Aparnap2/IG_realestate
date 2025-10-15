@@ -1,22 +1,13 @@
-interface Lead {
-  id: string
-  user_id: string
-  channel: string
-  message: string
-  qualified_score?: number
-  budget?: number
-  location?: string
-  property_type?: string
-  status: string
-  created_at: string
-}
+import { Lead } from "@/hooks/useLeads"
+import { Company } from "@/lib/supabase"
 
 interface LeadsTableProps {
   leads?: Lead[]
   isLoading: boolean
+  company?: Company
 }
 
-export default function LeadsTable({ leads, isLoading }: LeadsTableProps) {
+export default function LeadsTable({ leads, isLoading, company }: LeadsTableProps) {
   if (isLoading) {
     return (
       <div className="bg-white shadow overflow-hidden sm:rounded-md">
@@ -44,7 +35,7 @@ export default function LeadsTable({ leads, isLoading }: LeadsTableProps) {
     }
   }
 
-  const getScoreColor = (score?: number) => {
+  const getScoreColor = (score?: number | null) => {
     if (!score) return 'text-gray-400'
     if (score >= 0.8) return 'text-green-600'
     if (score >= 0.6) return 'text-yellow-600'
@@ -93,7 +84,7 @@ export default function LeadsTable({ leads, isLoading }: LeadsTableProps) {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
                         <div className="text-sm font-medium text-gray-900">
-                          {lead.user_id}
+                          {lead.name || lead.user_id}
                         </div>
                         <div className="text-sm text-gray-500 truncate max-w-xs">
                           {lead.message}
@@ -112,11 +103,12 @@ export default function LeadsTable({ leads, isLoading }: LeadsTableProps) {
                         {lead.budget && <div>Budget: ${lead.budget.toLocaleString()}</div>}
                         {lead.location && <div>Location: {lead.location}</div>}
                         {lead.property_type && <div>Type: {lead.property_type}</div>}
+                        {lead.timeline && <div>Timeline: {lead.timeline}</div>}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`text-sm font-medium ${getScoreColor(lead.qualified_score)}`}>
-                        {lead.qualified_score ? lead.qualified_score.toFixed(2) : 'N/A'}
+                        {lead.qualified_score !== null && lead.qualified_score !== undefined ? lead.qualified_score.toFixed(2) : 'N/A'}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">

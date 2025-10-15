@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabaseClient'
 import { useEffect } from 'react'
 
-interface Lead {
+export interface Lead {
   id: string
   user_id: string
   channel: string

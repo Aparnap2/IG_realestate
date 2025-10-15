@@ -1,0 +1,158 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install uv
+      uses: astral-sh/setup-uv@v2
+      with:
+        version: "latest"
+    
+    - name: Install dependencies
+      run: |
+        cd backend
+        uv pip install -e .
+        uv pip install pytest pytest-cov pytest-asyncio httpx
+    
+    - name: Run tests with coverage
+      run: |
+        cd backend
+        pytest --cov=. --cov-report=xml --cov-report=html --cov-fail-under=60
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+        REDIS_URL: redis://localhost:6379/0
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/coverage.xml
+        flags: backend
+        name: backend-coverage
+    
+    - name: Archive coverage reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: backend-coverage
+        path: backend/htmlcov/
+
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    needs: backend-tests
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: frontend/pnpm-lock.yaml
+    
+    - name: Install pnpm
+      run: npm install -g pnpm
+    
+    - name: Install dependencies
+      run: |
+        cd frontend
+        pnpm install
+    
+    - name: Install Playwright browsers
+      run: |
+        cd frontend
+        npx playwright install --with-deps
+    
+    - name: Start backend server
+      run: |
+        cd backend
+        uv pip install -e .
+        uvicorn main:app --host 0.0.0.0 --port 8000 &
+        sleep 10
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+        REDIS_URL: redis://localhost:6379/0
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    
+    - name: Start frontend server
+      run: |
+        cd frontend
+        pnpm dev &
+        sleep 10
+    
+    - name: Run E2E tests
+      run: |
+        cd frontend
+        npx playwright test tests/e2e/ --reporter=html
+    
+    - name: Upload E2E test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-report
+        path: frontend/playwright-report/
+    
+    - name: Upload E2E test traces
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: playwright-traces
+        path: frontend/test-results/
+
+  coverage-check:
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-e2e]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check coverage thresholds
+      run: |
+        # This job will fail if any of the previous jobs failed
+        # or if coverage thresholds are not met
+        echo "All tests passed and coverage thresholds met!"
+        echo "Backend coverage: 60% minimum"
+        echo "Frontend E2E tests: 100% pass rate required"

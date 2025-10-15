@@ -14,6 +14,7 @@ Following TDD approach: Test → Analyze → Fix → Retest
 
 import pytest
 import sys
+import os
 import asyncio
 import time
 import json
@@ -27,7 +28,8 @@ from typing import Dict, Any
 # Add the parent directory to the path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agents.prd_compliant_workflow import RouterAgent, QualifierAgent, SchedulerAgent
+from backend.agents.prd_compliant_workflow import QualifierAgent, SchedulerAgent
+from backend.agents.router import RouterAgent
 from tools import compliance as compliance_tools
 from models.lead import Lead
 from schemas.state import AgentState

@@ -15,6 +15,7 @@ class MetricsCollector:
         self.request_count = 0
         self.total_response_time = 0.0
         self.error_count = 0
+        self.counters = {}
         
     def record_request(self, response_time: float, success: bool = True):
         """Record a request with its response time"""
@@ -46,6 +47,17 @@ class MetricsCollector:
         self.request_count = 0
         self.total_response_time = 0.0
         self.error_count = 0
+        self.counters = {}
+        
+    def increment_counter(self, name: str, value: int = 1):
+        """Increment a named counter"""
+        if name not in self.counters:
+            self.counters[name] = 0
+        self.counters[name] += value
+        
+    def get_counter(self, name: str) -> int:
+        """Get the value of a named counter"""
+        return self.counters.get(name, 0)
         
     def log_metrics(self):
         """Log current metrics"""

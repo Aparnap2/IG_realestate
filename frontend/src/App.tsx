@@ -1,17 +1,11 @@
 import { useState, useEffect } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import Dashboard from './components/Dashboard'
 import Login from './components/Login'
 import CompanySelector from './components/CompanySelector'
 import { AuthProvider, useAuth } from './hooks/useAuth'
-// import { Company } from './lib/supabase'
-
-interface Company {
-  id: string;
-  name: string;
-  domain?: string;
-}
+import { Company } from './lib/supabase'
 
 const queryClient = new QueryClient()
 
@@ -53,7 +47,7 @@ function AppContent() {
 
   // TEMPORARY: Auto-select mock company for testing
   if (!selectedCompany) {
-    const mockCompany = {
+    const mockCompany: Company = {
       id: 'mock-company-123',
       name: 'AAA Real Estate Test',
       slug: 'aaa-real-estate-test',
@@ -70,6 +64,11 @@ function AppContent() {
           hitl_enabled: true,
           analytics_enabled: true,
           custom_workflows: true
+        },
+        limits: {
+          max_leads_per_month: 1000,
+          max_integrations: 5,
+          max_users: 10
         }
       }
     }
@@ -96,23 +95,32 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Routes>
-        <Route 
-          path="/" 
+        <Route
+          path="/"
           element={
-            <Dashboard 
-              company={selectedCompany}
-              onCompanyChange={() => setSelectedCompany(null)}
-            />
-          } 
+            selectedCompany ? (
+              <Dashboard
+                company={selectedCompany}
+                onCompanyChange={() => setSelectedCompany(null)}
+              />
+            ) : (
+              <div>Loading company data...</div>
+            )
+          }
         />
-        <Route 
-          path="/company" 
+        <Route
+          path="/company"
           element={
-            <CompanySelector 
+            <CompanySelector
               onCompanySelect={handleCompanySelect}
               selectedCompany={selectedCompany}
             />
-          } 
+          }
+        />
+        {/* Catch-all route for invalid paths */}
+        <Route
+          path="*"
+          element={<Navigate to="/" replace />}
         />
       </Routes>
     </div>

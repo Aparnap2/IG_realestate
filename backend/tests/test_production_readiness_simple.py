@@ -14,8 +14,8 @@ from unittest.mock import Mock, patch
 # Add the parent directory to the path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agents.prd_compliant_workflow import QualifierAgent, SchedulerAgent
-from agents.router import RouterAgent
+from backend.agents.prd_compliant_workflow import QualifierAgent, SchedulerAgent
+from backend.agents.router import RouterAgent
 from models.lead import Lead
 
 class TestProductionReadinessSimple:

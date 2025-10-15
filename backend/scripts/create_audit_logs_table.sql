@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     event_type VARCHAR NOT NULL,
+    entity_type VARCHAR NOT NULL,
     entity_id VARCHAR NOT NULL,
     agent_type VARCHAR,
     payload JSONB NOT NULL,

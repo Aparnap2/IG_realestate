@@ -123,12 +123,12 @@ class TestSchedulerTourOptimization:
                 time_slot=selected_slot
             )
             
-            # Should create optimization result with property addresses
-            assert result["success"] == True
-            assert "property_addresses" in result
-            assert len(result["property_addresses"]) == 2
-            assert "optimized_properties" in result
-            assert len(result["optimized_properties"]) == 2
+        # Should create optimization result with property addresses
+        assert result["success"] == True
+        assert "property_addresses" in result
+        assert len(result["property_addresses"]) == 2
+        assert "optimized_properties" in result
+        assert len(result["optimized_properties"]) == 2
     
     def test_tour_duration_calculation(self, scheduler_agent, sample_properties):
         """Test accurate tour duration calculation including travel time."""

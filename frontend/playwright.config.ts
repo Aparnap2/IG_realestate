@@ -24,7 +24,7 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
     },
     {
-      command: 'cd ../backend && source venv/bin/activate && python test_server.py',
+      command: 'cd ../backend && bash -c "source .venv/bin/activate && python main.py"',
       port: 8000,
       reuseExistingServer: !process.env.CI,
     }

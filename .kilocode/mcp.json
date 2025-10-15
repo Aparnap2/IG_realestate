@@ -1,0 +1,75 @@
+{
+  "mcpServers": {
+    "puppeteer": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-puppeteer"
+      ],
+      "env": {
+        "SEQUENTIAL_MODE": "true"
+      },
+      "disabled": false
+    },
+    "mcp-playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "env": {
+        "BROWSER": "chromium",
+        "CONTEXT_NAME": "context7",
+        "PERSISTENT": "true",
+        "TIMEOUT": "30000",
+        "MEMORY_FILE": "~/.agent.md",
+        "SEQUENTIAL_MODE": "true"
+      },
+      "disabled": false
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "env": {
+        "MEMORY_FILE": "./.agent.md",
+        "SEQUENTIAL_MODE": "true",
+        "MEMORY_STORAGE": "./memory/context7_memory.json",
+        "MAX_MEMORY_ENTRIES": "1000",
+        "MEMORY_RETENTION_DAYS": "30"
+      },
+      "disabled": false
+    },
+    "memory-mcp": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "env": {
+        "MEMORY_FILE": "./.memory/memory_store.json",
+        "MAX_ENTRIES": "1000",
+        "RETENTION_DAYS": "30",
+        "SEQUENTIAL_MODE": "true"
+      },
+      "disabled": false
+    },
+    "ddg-web-search": {
+      "command": "uvx",
+      "args": [
+        "duckduckgo-mcp-server"
+      ],
+      "env": {
+        "MEMORY_FILE": "./.agent.md",
+        "SEQUENTIAL_MODE": "true"
+      },
+      "disabled": false,
+      "alwaysAllow": [
+        "search",
+        "fetch_content"
+      ]
+    }
+  }
+}

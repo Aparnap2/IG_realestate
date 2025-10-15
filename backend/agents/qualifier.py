@@ -84,7 +84,65 @@ def qualifier_node(state: AgentState) -> Dict[str, Any]:
     
     # Check if no properties match the criteria
     if not db_results:
-        return handle_no_matching_properties(lead, state)
+        # Still score the lead even if no properties match
+        # This allows low-scoring leads to go to followup
+        no_props_result = handle_no_matching_properties(lead, state)
+        
+        # Get LLM score to determine routing
+        score_response = get_llm_response_sync(f"""
+        Score this lead (0-1) for real estate interest based on:
+        Budget: {lead.budget}
+        Location: {lead.location}
+        Type: {lead.property_type}
+        Timeline: {lead.timeline}
+
+        Note: No properties currently match in database.
+
+        Provide your response as a JSON object with the following structure:
+        {{
+            "score": 0.8,
+            "reasoning": "Explanation of the score"
+        }}
+        """)
+        
+        # Parse the score from JSON response
+        try:
+            import json
+            score_data = json.loads(score_response)
+            score = float(score_data["score"])
+            if score > 1.0:
+                score = 1.0
+            elif score < 0.0:
+                score = 0.0
+        except:
+            # Fallback to simple parsing if JSON fails
+            try:
+                score = float(score_response.strip())
+                if score > 1.0:
+                    score = 1.0
+                elif score < 0.0:
+                    score = 0.0
+            except:
+                score = 0.5  # Default score if parsing fails
+        
+        # Update lead with score
+        lead.qualified_score = score
+        
+        # Get threshold from configuration
+        scheduler_threshold = float(get_config("scheduler_threshold", "0.7"))
+        
+        # Route based on score even with no matching properties
+        if score > scheduler_threshold:
+            # High score but no properties - wait for response about waitlist
+            return no_props_result
+        else:
+            # Low score and no properties - send to followup for nurturing
+            lead.history.append({
+                "message": f"Lead not qualified (score: {score}), sending to followup despite no matching properties",
+                "timestamp": datetime.now().isoformat(),
+                "agent": "qualifier"
+            })
+            return {"lead": lead, "next_agent": "followup"}
     
     # Check for budget mismatches
     budget_analysis = detect_budget_mismatch(lead, db_results)
