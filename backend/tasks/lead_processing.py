@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from models.lead import Lead
 from schemas.state import AgentState
-from backend.workflow import create_workflow
+from workflow import create_workflow
 from utils.redis_client import store_conversation_history
 from utils.observability import track_performance, metrics_collector
 

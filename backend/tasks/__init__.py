@@ -1,1 +1,1 @@
-from backend.tasks.lead_processing import process_lead
+from tasks.lead_processing import process_lead

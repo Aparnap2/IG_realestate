@@ -12,13 +12,26 @@ CREATE TABLE IF NOT EXISTS leads (
     location VARCHAR,
     property_type VARCHAR,
     timeline VARCHAR,
+    desired_bedrooms INTEGER,
     name VARCHAR,
     email VARCHAR,
     meeting_slot TIMESTAMP WITH TIME ZONE,
     status VARCHAR DEFAULT 'new' CHECK (status IN ('new', 'qualified', 'scheduled', 'booked', 'interrupted', 'approved', 'rejected')),
     history JSONB DEFAULT '[]'::jsonb,
+    last_interaction_at TIMESTAMP WITH TIME ZONE,
+    tcpa_opt_in BOOLEAN,
+    consent_timestamp TIMESTAMP WITH TIME ZONE,
+    notes TEXT,
+    error TEXT,
+    raw_response JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Create indexes for leads table
+CREATE INDEX IF NOT EXISTS idx_leads_user_id ON leads(user_id);
+CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
+CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at);
+CREATE INDEX IF NOT EXISTS idx_leads_last_interaction_at ON leads(last_interaction_at);
 
 -- Create properties table
 CREATE TABLE IF NOT EXISTS properties (
@@ -38,6 +51,20 @@ CREATE TABLE IF NOT EXISTS configs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Create lead_events table for tracking lead lifecycle events
+CREATE TABLE IF NOT EXISTS lead_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    lead_id UUID REFERENCES leads(id) ON DELETE CASCADE,
+    event_type VARCHAR NOT NULL CHECK (event_type IN ('created', 'qualified', 'scheduled', 'booked', 'interrupted', 'approved', 'rejected', 'error')),
+    event_data JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create indexes for lead_events table
+CREATE INDEX IF NOT EXISTS idx_lead_events_lead_id ON lead_events(lead_id);
+CREATE INDEX IF NOT EXISTS idx_lead_events_event_type ON lead_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_lead_events_created_at ON lead_events(created_at);
 
 -- Insert sample data
 INSERT INTO properties (price, location, property_type, amenities, details) VALUES

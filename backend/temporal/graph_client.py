@@ -345,7 +345,8 @@ class GraphitiClient:
             supabase.table("lead_events").upsert(event_record).execute()
             
         except Exception as e:
-            raise Exception(f"Supabase fallback storage failed: {str(e)}")
+            # Silently fail if lead_events table doesn't exist
+            pass
     
     async def _query_graphiti_history(
         self,

@@ -155,14 +155,38 @@ async def root(request: Request):
         }
     }
 
+# Global message cache for deduplication across requests
+_global_message_cache = set()
+_cache_max_size = 1000
+
+async def get_instagram_user_profile(user_id: str):
+    """Fetch Instagram user profile"""
+    import aiohttp
+    token = os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN") or os.getenv("META_PAGE_ACCESS_TOKEN")
+    if not token:
+        return {}
+    
+    url = f"https://graph.instagram.com/v21.0/{user_id}"
+    params = {"fields": "name,username", "access_token": token}
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+    except Exception as e:
+        print(f"⚠️ Profile fetch error: {e}", flush=True)
+    return {}
+
 @app.post("/")
 async def root_webhook(request: Request):
     """Handle Instagram webhooks at root path"""
     import json
+    import hashlib
     
     try:
         body = await request.json()
-        print(f"📨 Webhook at root: {json.dumps(body, indent=2)}")
+        print(f"📨 Webhook at root: {json.dumps(body, indent=2)}", flush=True)
         
         if body.get("object") != "instagram":
             return {"status": "ignored"}
@@ -170,6 +194,7 @@ async def root_webhook(request: Request):
         from tasks.production_lead_processing import process_lead_message
         
         results = []
+        
         for entry in body.get("entry", []):
             ig_account_id = entry.get("id")  # This is the IG account that received the message
             
@@ -180,19 +205,54 @@ async def root_webhook(request: Request):
                         print("⏭️ Skipping echo message")
                         continue
                     
+                    # Get message ID for deduplication
+                    message_id = msg["message"].get("mid")
+                    if not message_id:
+                        print("⚠️ No message ID, skipping", flush=True)
+                        continue
+                    
+                    # Check global cache for duplicates
+                    if message_id in _global_message_cache:
+                        print(f"🔁 DUPLICATE DETECTED: {message_id[:50]}... (cache: {len(_global_message_cache)})", flush=True)
+                        continue
+                    
+                    _global_message_cache.add(message_id)
+                    print(f"✅ NEW MESSAGE CACHED: {message_id[:50]}... (cache: {len(_global_message_cache)})", flush=True)
+                    
+                    # Cleanup cache if too large
+                    if len(_global_message_cache) > _cache_max_size:
+                        to_remove = list(_global_message_cache)[:_cache_max_size // 2]
+                        for old_id in to_remove:
+                            _global_message_cache.discard(old_id)
+                    
                     sender_id = msg["sender"]["id"]
                     text = msg["message"]["text"]
-                    print(f"💬 Processing: {sender_id} -> {text}")
+                    timestamp = msg.get("timestamp", 0)
+                    
+                    # Skip very old messages (more than 1 hour old)
+                    import time
+                    current_time = int(time.time() * 1000)  # Current time in milliseconds
+                    if current_time - timestamp > 3600000:  # 1 hour in milliseconds
+                        print(f"⏭️ Skipping old message: {message_id} (age: {(current_time - timestamp) / 1000 / 60:.1f} minutes)")
+                        continue
+                    
+                    print(f"💬 Processing: {sender_id} -> {text} (ID: {message_id})", flush=True)
+                    
+                    # Fetch user profile
+                    print(f"👤 Fetching profile for: {sender_id}", flush=True)
+                    profile = await get_instagram_user_profile(sender_id)
+                    user_name = profile.get("name") or profile.get("username") or "there"
+                    print(f"✅ User profile: name={user_name}, username={profile.get('username')}", flush=True)
                     
                     # Process through PRD workflow
-                    result = await process_lead_message(sender_id, text, "ig")
+                    result = await process_lead_message(sender_id, text, "ig", user_name=user_name)
                     
                     # Send Instagram response using correct IG account ID
                     if result.get("status") == "success" and result.get("response_message"):
                         await send_instagram_reply(sender_id, result["response_message"], ig_account_id)
                     
                     results.append(result)
-                    print(f"✅ Processed: score={result.get('qualified_score')}, next={result.get('next_agent')}")
+                    print(f"✅ Processed: score={result.get('qualified_score')}, next={result.get('next_agent')}", flush=True)
         
         return {"status": "success", "processed": len(results), "results": results}
     except Exception as e:
@@ -233,10 +293,10 @@ async def send_instagram_reply(recipient_id: str, message: str, ig_account_id: s
     except Exception as e:
         print(f"❌ Send error: {e}")
 
-@app.post("/webhook")
-async def webhook_post_handler(request: Request):
-    """Handle webhooks at /webhook path"""
-    return await root_webhook(request)
+# @app.post("/webhook")
+# async def webhook_post_handler(request: Request):
+#     """Handle webhooks at /webhook path"""
+#     return await root_webhook(request)
 
 @app.get("/status")
 async def system_status():

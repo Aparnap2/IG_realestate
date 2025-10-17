@@ -29,6 +29,8 @@ class Lead(BaseModel):
     tcpa_opt_in: Optional[bool] = Field(None, description="TCPA opt-in status")
     consent_timestamp: Optional[datetime] = Field(None, description="Timestamp of latest consent update")
     notes: Optional[str] = Field(None, description="Unstructured notes captured during processing")
+    error: Optional[str] = Field(None, description="Error message if processing failed")
+    raw_response: Optional[Dict[str, Any]] = Field(None, description="Raw LLM response data")
     created_at: datetime = Field(default_factory=datetime.now)
     
     class Config:

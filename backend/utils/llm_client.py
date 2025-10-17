@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Default model selection
-DEFAULT_OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet")
+DEFAULT_OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free")
 
 async def get_llm_response(
     prompt: str,
@@ -34,7 +34,10 @@ async def get_llm_response(
     """
     api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
+        print("⚠️ OpenRouter API key not configured")
         return "OpenRouter API key not configured"
+    
+    print(f"🤖 Calling OpenRouter with model: {model}")
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -61,40 +64,43 @@ async def get_llm_response(
             ) as response:
                 if response.status == 200:
                     data = await response.json()
+                    print(f"✅ OpenRouter response received")
                     return data["choices"][0]["message"]["content"].strip()
                 else:
                     error_text = await response.text()
-                    print(f"OpenRouter API error: {response.status} - {error_text}")
+                    print(f"❌ OpenRouter API error: {response.status} - {error_text}")
+                    print(f"💡 Tip: Free tier has daily limits. Try: deepseek/deepseek-chat:free or meta-llama/llama-3.2-3b-instruct:free")
                     return "I apologize, but I'm having trouble processing your request right now. Please try again later."
                     
     except Exception as e:
-        print(f"Error getting LLM response: {e}")
+        print(f"❌ Error getting LLM response: {e}")
         return "I apologize, but I'm having trouble processing your request right now. Please try again later."
 
 
 def _run_coro_sync(coro_fn, *args, **kwargs):
     """Run an async coroutine in a blocking context using a dedicated thread."""
-    try:
-        return asyncio.run(coro_fn(*args, **kwargs))
-    except RuntimeError:
-        # Likely inside an active event loop; execute in separate thread
-        result_container: Dict[str, Any] = {}
-        exception_container: Dict[str, BaseException] = {}
+    result_container: Dict[str, Any] = {}
+    exception_container: Dict[str, BaseException] = {}
 
-        def _runner():
+    def _runner():
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             try:
-                result_container["value"] = asyncio.run(coro_fn(*args, **kwargs))
-            except BaseException as exc:  # noqa: BLE001 - propagate any exception
-                exception_container["error"] = exc
+                result_container["value"] = loop.run_until_complete(coro_fn(*args, **kwargs))
+            finally:
+                loop.close()
+        except BaseException as exc:  # noqa: BLE001 - propagate any exception
+            exception_container["error"] = exc
 
-        thread = threading.Thread(target=_runner, daemon=True)
-        thread.start()
-        thread.join()
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
 
-        if "error" in exception_container:
-            raise exception_container["error"]
+    if "error" in exception_container:
+        raise exception_container["error"]
 
-        return result_container.get("value")
+    return result_container.get("value")
 
 
 def get_llm_response_sync(
@@ -115,7 +121,7 @@ def get_llm_response_sync(
 def get_structured_llm_response(
     prompt: str,
     response_format: Dict[str, Any],
-    model: str = "anthropic/claude-3.5-sonnet"
+    model: str = DEFAULT_OPENROUTER_MODEL
 ) -> Dict[str, Any]:
     """
     Get structured response from LLM with specific format.
@@ -132,18 +138,22 @@ def get_structured_llm_response(
         # Add format instructions to prompt
         format_prompt = f"{prompt}\n\nPlease respond in the following JSON format:\n{response_format}"
 
-        response = get_llm_response_sync(format_prompt, model=model)
+        response = _run_coro_sync(get_llm_response, format_prompt, model=model)
         
         # Try to parse as JSON
         import json
+        import re
         try:
-            return json.loads(response)
+            # Strip markdown code blocks if present
+            cleaned = re.sub(r'^```json\s*|\s*```$', '', response.strip(), flags=re.MULTILINE)
+            cleaned = re.sub(r'^```\s*|\s*```$', '', cleaned.strip(), flags=re.MULTILINE)
+            return json.loads(cleaned)
         except json.JSONDecodeError:
             # Return default structure if parsing fails
             return {"error": "Failed to parse structured response", "raw_response": response}
             
     except Exception as e:
-        print(f"Error getting structured LLM response: {e}")
+        print(f"❌ Error getting structured LLM response: {e}")
         return {"error": str(e)}
 
 def extract_lead_info(message: str) -> Dict[str, Any]:
@@ -248,4 +258,4 @@ def generate_response_message(
     else:
         prompt = f"Generate a professional real estate response for: {lead_info}"
     
-    return get_llm_response_sync(prompt)
+    return _run_coro_sync(get_llm_response, prompt)

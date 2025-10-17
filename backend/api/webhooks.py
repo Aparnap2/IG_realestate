@@ -56,6 +56,34 @@ except ImportError:
             "properties_found": 0
         }
 
+# In-memory cache for message deduplication
+_message_cache = set()
+_cache_max_size = 1000
+
+def _is_duplicate_message(message_id: str) -> bool:
+    """Check if message was already processed using in-memory cache"""
+    print(f"🔍 DEDUP CHECK CALLED for: {message_id[:50] if message_id else 'None'}...", flush=True)
+    if not message_id:
+        print("⚠️ No message_id provided, skipping dedup", flush=True)
+        return False
+    
+    # Check in-memory cache
+    if message_id in _message_cache:
+        print(f"🔁 DUPLICATE DETECTED: {message_id[:50]}... (cache size: {len(_message_cache)})", flush=True)
+        return True
+    
+    # Add to cache
+    _message_cache.add(message_id)
+    print(f"✅ NEW MESSAGE CACHED: {message_id[:50]}... (cache size: {len(_message_cache)})", flush=True)
+    
+    # Cleanup old entries if cache is too large
+    if len(_message_cache) > _cache_max_size:
+        to_remove = list(_message_cache)[:_cache_max_size // 2]
+        for old_msg_id in to_remove:
+            _message_cache.discard(old_msg_id)
+    
+    return False
+
 try:
     from utils.observability import track_performance, metrics_collector
 except ImportError:
@@ -84,6 +112,28 @@ logger = logging.getLogger(__name__)
 META_APP_SECRET = os.getenv("META_APP_SECRET")
 META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "aaa_real_estate_verify_token_2025")
 
+
+async def _get_instagram_user_profile(user_id: str) -> Dict[str, Any]:
+    """Fetch Instagram user profile information."""
+    token = os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN") or os.getenv("META_PAGE_ACCESS_TOKEN")
+    if not token:
+        return {}
+    
+    url = f"https://graph.instagram.com/v21.0/{user_id}"
+    params = {"fields": "name,username", "access_token": token}
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data
+                else:
+                    logger.warning(f"Failed to fetch user profile: {resp.status}")
+                    return {}
+    except Exception as e:
+        logger.warning(f"Error fetching user profile: {e}")
+        return {}
 
 async def _send_instagram_reply(recipient_id: str, message: str, ig_account_id: Optional[str] = None) -> None:
     """Send a reply to Instagram using the Messaging API."""
@@ -273,7 +323,7 @@ async def instagram_webhook(
             logger.error(f"Raw payload: {payload.decode('utf-8', errors='ignore')}")
             raise HTTPException(status_code=400, detail="Invalid JSON")
 
-        logger.info(f"Instagram webhook received: {webhook_data}")
+        print(f"📨 Webhook at root: {json.dumps(webhook_data, indent=2)}")
 
         # Validate webhook structure
         if webhook_data.get("object") != "instagram":
@@ -288,8 +338,14 @@ async def instagram_webhook(
         entries_processed = 0
 
         async def handle_message(sender_id: str, message_text: str, account_id: Optional[str], message_id: Optional[str]) -> Dict[str, Any]:
+            # Fetch user profile
+            print(f"👤 Fetching profile for user: {sender_id}", flush=True)
+            user_profile = await _get_instagram_user_profile(sender_id)
+            user_name = user_profile.get("name") or user_profile.get("username") or "there"
+            print(f"✅ User profile: name={user_name}, username={user_profile.get('username')}", flush=True)
+            
             logger.info(" Routing message through production lead processor")
-            processing_result = await process_lead_message(sender_id, message_text, "ig")
+            processing_result = await process_lead_message(sender_id, message_text, "ig", user_name=user_name)
 
             logger.info(f" Processing result: {processing_result}")
 
@@ -302,11 +358,13 @@ async def instagram_webhook(
 
             if processing_result.get("status") == "success" and processing_result.get("response_message"):
                 try:
+                    print(f"📤 Sending from IG account {account_id} to {sender_id}")
                     await _send_instagram_reply(
                         recipient_id=sender_id,
                         message=processing_result["response_message"],
                         ig_account_id=account_id
                     )
+                    print(f"✅ Sent reply to {sender_id}")
                     response_payload["response_sent"] = True
                 except Exception as send_error:
                     logger.error(f" Failed to send Instagram reply: {send_error}")
@@ -323,6 +381,11 @@ async def instagram_webhook(
                 for msg_idx, messaging_event in enumerate(entry["messaging"]):
                     logger.info(f" Processing message {msg_idx + 1} in entry {entry_idx + 1}")
 
+                    # Skip echo messages (messages sent by the bot itself)
+                    if messaging_event.get("message", {}).get("is_echo"):
+                        logger.info("⏭️ Skipping echo message")
+                        continue
+                    
                     # Check if it's a message event
                     if "message" in messaging_event and "text" in messaging_event["message"]:
                         # Extract message data
@@ -330,9 +393,12 @@ async def instagram_webhook(
                         message_text = messaging_event.get("message", {}).get("text")
                         message_id = messaging_event.get("message", {}).get("mid")
 
-                        logger.info(f" Sender ID: {sender_id}")
-                        logger.info(f" Message text: {message_text}")
-                        logger.info(f" Message ID: {message_id}")
+                        # Check for duplicate message FIRST
+                        if _is_duplicate_message(message_id):
+                            print(f"⏭️ SKIPPING DUPLICATE: {message_id[:50]}...", flush=True)
+                            continue
+                        
+                        print(f"💬 Processing: {sender_id} -> {message_text} (ID: {message_id})", flush=True)
 
                         if sender_id and message_text:
                             logger.info(" Valid message found, preparing for processing")
@@ -340,7 +406,7 @@ async def instagram_webhook(
                             result_payload = await handle_message(sender_id, message_text, ig_account_id, message_id)
                             results.append(result_payload)
 
-                            logger.info(f" Instagram message processed: {sender_id}")
+                            print(f"✅ Processed: score={result_payload.get('result', {}).get('qualified_score')}, next={result_payload.get('result', {}).get('next_agent')}")
                             entries_processed += 1
                         else:
                             logger.warning(f" Missing sender_id or message_text: sender_id={sender_id}, message_text={message_text}")

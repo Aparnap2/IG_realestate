@@ -31,10 +31,10 @@ class ProductionLeadProcessor:
     
     def __init__(self):
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-        self.model = "anthropic/claude-3.5-sonnet"
+        self.model = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free")
         self.graph_client = get_graphiti_client()
     
-    async def process_lead_message(self, user_id: str, message: str, channel: str) -> Dict[str, Any]:
+    async def process_lead_message(self, user_id: str, message: str, channel: str, user_name: str = None) -> Dict[str, Any]:
         """
         Process a lead message through the complete PRD workflow.
         
@@ -63,6 +63,9 @@ class ProductionLeadProcessor:
                     }
                 ]
             }
+            
+            if user_name:
+                lead_data["name"] = user_name
 
             # Compliance logging for inbound message
             gdpr_tcpa_tracker(
@@ -149,7 +152,7 @@ class ProductionLeadProcessor:
             
             # Step 6: Generate response message
             response_message = await self.generate_response_message(
-                extracted_info, db_results, qualification_result, next_agent
+                extracted_info, db_results, qualification_result, next_agent, user_name
             )
 
             response_message, compliance_meta = await self._apply_compliance_guardrails(
@@ -409,23 +412,24 @@ class ProductionLeadProcessor:
             return "followup"
     
     async def generate_response_message(self, lead_info: Dict[str, Any], db_results: list, 
-                                      qualification: Dict[str, Any], next_agent: str) -> str:
+                                      qualification: Dict[str, Any], next_agent: str, user_name: str = None) -> str:
         """Generate appropriate response message based on qualification and next agent"""
         
         score = qualification["score"]
         properties_count = len(db_results)
+        greeting = f"Hey {user_name}! " if user_name else "Hi! "
         
         if next_agent == "hitl":
-            return f"Thank you for your interest! Based on your requirements, I found {properties_count} premium properties that might be perfect for you. Let me connect you with our senior advisor who specializes in luxury properties."
+            return f"{greeting}Thank you for your interest! Based on your requirements, I found {properties_count} premium properties that might be perfect for you. Let me connect you with our senior advisor who specializes in luxury properties."
         
         elif next_agent == "scheduler":
-            return f"Great! I found {properties_count} properties that match your criteria. I'd love to show you these options. Would you like to schedule a viewing? I have availability this week."
+            return f"{greeting}Great! I found {properties_count} properties that match your criteria. I'd love to show you these options. Would you like to schedule a viewing? I have availability this week."
         
         else:  # followup
             if properties_count > 0:
-                return f"Thank you for your interest! I found {properties_count} properties in your area. Let me share some details about what's available and help you explore your options."
+                return f"{greeting}Thank you for your interest! I found {properties_count} properties in your area. Let me share some details about what's available and help you explore your options."
             else:
-                return "Thank you for reaching out! While I don't have exact matches right now, I'd love to understand your needs better and keep you updated on new listings that might interest you."
+                return f"{greeting}Thank you for reaching out! While I don't have exact matches right now, I'd love to understand your needs better and keep you updated on new listings that might interest you."
     
     async def check_hitl_interrupt(self, qualification: Dict[str, Any], lead_info: Dict[str, Any]) -> bool:
         """Check if HITL interrupt is needed based on PRD criteria"""
@@ -522,6 +526,6 @@ class ProductionLeadProcessor:
 # Global processor instance
 processor = ProductionLeadProcessor()
 
-async def process_lead_message(user_id: str, message: str, channel: str) -> Dict[str, Any]:
+async def process_lead_message(user_id: str, message: str, channel: str, user_name: str = None) -> Dict[str, Any]:
     """Main entry point for lead processing"""
-    return await processor.process_lead_message(user_id, message, channel)
+    return await processor.process_lead_message(user_id, message, channel, user_name)

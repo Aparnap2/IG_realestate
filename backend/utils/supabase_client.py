@@ -59,6 +59,15 @@ def save_lead(lead_data: Dict[str, Any]) -> Dict[str, Any]:
     Returns:
         Saved lead data
     """
+    # Check if lead exists by user_id
+    if "user_id" in lead_data and "id" not in lead_data:
+        existing = supabase.table("leads").select("id").eq("user_id", lead_data["user_id"]).execute()
+        if existing.data:
+            lead_data["id"] = existing.data[0]["id"]
+            print(f"🔄 Updating existing lead: {lead_data['id']}")
+        else:
+            print(f"✨ Creating new lead for user: {lead_data['user_id']}")
+    
     response = supabase.table("leads").upsert(lead_data).execute()
     
     return response.data[0] if response.data else {}
@@ -82,5 +91,5 @@ def get_config(key: str, default_value: str = "") -> str:
         else:
             return default_value
     except Exception as e:
-        print(f"Error getting config for key {key}: {e}")
+        print(f"⚠️ Error getting config for key {key}: {e}")
         return default_value
