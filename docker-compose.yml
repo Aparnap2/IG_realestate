@@ -33,6 +33,17 @@ services:
     ports:
       - "6379:6379"
 
+  neo4j:
+    image: neo4j:latest
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/password
+      - NEO4J_PLUGINS=["graph-data-science"]
+    volumes:
+      - neo4j_data:/data
+
   db:
     image: postgres:15
     environment:
@@ -68,3 +79,4 @@ services:
 
 volumes:
   postgres_data:
+  neo4j_data:

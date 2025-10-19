@@ -1,6 +1,6 @@
-from backend.config.settings import Config
-from backend.utils.supabase_client import supabase
-from backend.utils.redis_client import redis_client
+from config.settings import Config
+from utils.supabase_client import supabase
+from utils.redis_client import redis_client
 
 def validate_config():
     """
@@ -23,8 +23,8 @@ def validate_config():
     if not Config.META_APP_SECRET:
         missing_configs.append("META_APP_SECRET")
     
-    if not Config.META_ACCESS_TOKEN:
-        missing_configs.append("META_ACCESS_TOKEN")
+    if not Config.META_ACCESS_TOKEN and not Config.META_PAGE_ACCESS_TOKEN:
+        missing_configs.append("META_ACCESS_TOKEN or META_PAGE_ACCESS_TOKEN")
     
     if missing_configs:
         raise ValueError(f"Missing required configuration: {', '.join(missing_configs)}")

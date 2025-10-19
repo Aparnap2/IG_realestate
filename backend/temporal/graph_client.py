@@ -333,19 +333,33 @@ class GraphitiClient:
         try:
             from utils.supabase_client import supabase
             
+            # Convert lead_id to UUID if needed by querying leads table
+            # Try instagram_id first (primary identifier), then fallback to user_id
+            lead_uuid_response = supabase.table("leads").select("id").eq("instagram_id", lead_id).execute()
+            if not lead_uuid_response.data:
+                # Fallback to user_id if instagram_id doesn't match
+                lead_uuid_response = supabase.table("leads").select("id").eq("user_id", lead_id).execute()
+            lead_uuid = None
+            if lead_uuid_response.data:
+                lead_uuid = lead_uuid_response.data[0]["id"]
+            
+            if not lead_uuid:
+                # Skip if we can't find the lead UUID
+                return
+            
             event_record = {
-                "lead_id": lead_id,
+                "lead_id": lead_uuid,  # Use UUID instead of user_id
                 "event_type": event_type,
                 "event_data": event_data,
-                "timestamp": timestamp.isoformat(),
-                "created_at": datetime.now().isoformat()
+                "created_at": timestamp.isoformat()  # Use timestamp as created_at
             }
             
-            # Create table if it doesn't exist
-            supabase.table("lead_events").upsert(event_record).execute()
+            # Insert into lead_events table with proper schema
+            supabase.table("lead_events").insert(event_record).execute()
             
         except Exception as e:
-            # Silently fail if lead_events table doesn't exist
+            # Silently fail if lead_events table doesn't exist or schema mismatch
+            print(f"⚠️ Lead events fallback failed: {e}")
             pass
     
     async def _query_graphiti_history(
@@ -399,11 +413,23 @@ class GraphitiClient:
             
             cutoff_time = datetime.now() - timedelta(days=days_back)
             
+            # Convert lead_id to UUID if needed by querying leads table
+            # Try instagram_id first (primary identifier), then fallback to user_id
+            lead_uuid_response = supabase.table("leads").select("id").eq("instagram_id", lead_id).execute()
+            if not lead_uuid_response.data:
+                # Fallback to user_id if instagram_id doesn't match
+                lead_uuid_response = supabase.table("leads").select("id").eq("user_id", lead_id).execute()
+            
+            if not lead_uuid_response.data:
+                return []
+            
+            lead_uuid = lead_uuid_response.data[0]["id"]
+            
             query = supabase.table("lead_events")\
                 .select("*")\
-                .eq("lead_id", lead_id)\
-                .gte("timestamp", cutoff_time.isoformat())\
-                .order("timestamp", desc=True)
+                .eq("lead_id", lead_uuid)\
+                .gte("created_at", cutoff_time.isoformat())\
+                .order("created_at", desc=True)
             
             if event_types:
                 query = query.in_("event_type", event_types)

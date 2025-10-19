@@ -10,6 +10,10 @@ from fastapi.responses import PlainTextResponse
 import uvicorn
 import sys
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Add current directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,7 +21,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from api.processing import app as processing_app
     from api.hitl import app as hitl_app
-    from api.webhooks import app as webhooks_app
     from api.health import router as health_router
     from api.companies import router as companies_router
     from api.analytics import router as analytics_router
@@ -27,7 +30,6 @@ except ImportError as e:
     from fastapi import FastAPI
     processing_app = FastAPI()
     hitl_app = FastAPI()
-    webhooks_app = FastAPI()
     
     from fastapi import APIRouter
     health_router = APIRouter()
@@ -107,7 +109,6 @@ app.add_middleware(
 )
 
 # Mount sub-applications
-app.mount("/webhook", webhooks_app)
 app.mount("/processing", processing_app)
 app.mount("/hitl", hitl_app)
 
@@ -200,10 +201,22 @@ async def root_webhook(request: Request):
             
             for msg in entry.get("messaging", []):
                 if "message" in msg and "text" in msg["message"]:
-                    # Skip echo messages (our own replies)
-                    if msg["message"].get("is_echo"):
-                        print("⏭️ Skipping echo message")
-                        continue
+                    # Smart echo message handling for testing
+                    is_echo = msg["message"].get("is_echo")
+                    allow_echo = os.getenv("ALLOW_ECHO_MESSAGES", "false").lower()
+                    
+                    print(f"🔍 ENV DEBUG (main.py): ALLOW_ECHO_MESSAGES='{allow_echo}', is_echo={is_echo}", flush=True)
+                    
+                    if is_echo:
+                        if allow_echo == "true":
+                            print(f"🔧 DEBUG: Processing echo message for testing")
+                            # For echo messages, just log what was sent (no processing)
+                            echo_text = msg["message"].get("text", "")
+                            print(f"📤 BOT SENT: {echo_text[:100]}...", flush=True)
+                            continue  # Skip processing to prevent loops
+                        else:
+                            print(f"⏭️ Skipping echo message (set ALLOW_ECHO_MESSAGES=true to see bot replies)")
+                            continue
                     
                     # Get message ID for deduplication
                     message_id = msg["message"].get("mid")

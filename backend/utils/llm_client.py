@@ -1,5 +1,5 @@
 """
-LLM client for OpenRouter API integration according to PRD specifications.
+LLM client for OpenRouter API integration with Gemini fallback according to PRD specifications.
 """
 import os
 import aiohttp
@@ -11,8 +11,56 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Default model selection
-DEFAULT_OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free")
+# Try to import Google Generative AI
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    print("⚠️ Google Generative AI not available. Install with: pip install google-generativeai")
+
+# Default model selection - use more efficient free models
+DEFAULT_OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.2-3b-instruct:free")
+
+async def get_gemini_response(prompt: str, max_tokens: int = 1000, temperature: float = 0.7) -> str:
+    """
+    Get response from Google Gemini Pro as fallback.
+    
+    Args:
+        prompt: The prompt to send to Gemini
+        max_tokens: Maximum tokens in response
+        temperature: Temperature for response generation
+        
+    Returns:
+        Gemini response text
+    """
+    if not GEMINI_AVAILABLE:
+        print("⚠️ Gemini not available, skipping fallback")
+        return None
+    
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        print("⚠️ Google API key not configured for Gemini fallback")
+        return None
+    
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-pro')
+        
+        print(f"🔥 Calling Gemini Pro as fallback")
+        
+        response = model.generate_content(prompt)
+        
+        if response.text:
+            print(f"✅ Gemini response received")
+            return response.text.strip()
+        else:
+            print(f"❌ Gemini returned empty response")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Error getting Gemini response: {e}")
+        return None
 
 async def get_llm_response(
     prompt: str,
@@ -21,60 +69,69 @@ async def get_llm_response(
     temperature: float = 0.7
 ) -> str:
     """
-    Get response from OpenRouter LLM using async HTTP client.
+    Get response from OpenRouter LLM with Gemini fallback.
     
     Args:
         prompt: The prompt to send to the LLM
-        model: Model to use (default: Claude 3.5 Sonnet)
+        model: Model to use (default: meta-llama/llama-3.2-3b-instruct:free)
         max_tokens: Maximum tokens in response
         temperature: Temperature for response generation
         
     Returns:
         LLM response text
     """
+    # Try OpenRouter first
     api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        print("⚠️ OpenRouter API key not configured")
-        return "OpenRouter API key not configured"
+    if api_key:
+        print(f"🤖 Calling OpenRouter with model: {model}")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://aaa-real-estate.com",
+                    "X-Title": "AAA Real Estate Lead Capture System"
+                }
+                
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "max_tokens": max_tokens,
+                    "temperature": temperature
+                }
+                
+                async with session.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=payload
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        print(f"✅ OpenRouter response received")
+                        return data["choices"][0]["message"]["content"].strip()
+                    else:
+                        error_text = await response.text()
+                        print(f"❌ OpenRouter API error: {response.status} - {error_text}")
+                        if response.status == 429:
+                            print(f"💡 Rate limit reached. Trying Gemini fallback...")
+                        # Fall through to Gemini
+                        
+        except Exception as e:
+            print(f"❌ Error getting OpenRouter response: {e}")
+            print(f"💡 Trying Gemini fallback...")
+    else:
+        print("⚠️ OpenRouter API key not configured, trying Gemini...")
     
-    print(f"🤖 Calling OpenRouter with model: {model}")
+    # Try Gemini as fallback
+    gemini_response = await get_gemini_response(prompt, max_tokens, temperature)
+    if gemini_response:
+        return gemini_response
     
-    try:
-        async with aiohttp.ClientSession() as session:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://aaa-real-estate.com",
-                "X-Title": "AAA Real Estate Lead Capture System"
-            }
-            
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ],
-                "max_tokens": max_tokens,
-                "temperature": temperature
-            }
-            
-            async with session.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json=payload
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    print(f"✅ OpenRouter response received")
-                    return data["choices"][0]["message"]["content"].strip()
-                else:
-                    error_text = await response.text()
-                    print(f"❌ OpenRouter API error: {response.status} - {error_text}")
-                    print(f"💡 Tip: Free tier has daily limits. Try: deepseek/deepseek-chat:free or meta-llama/llama-3.2-3b-instruct:free")
-                    return "I apologize, but I'm having trouble processing your request right now. Please try again later."
-                    
-    except Exception as e:
-        print(f"❌ Error getting LLM response: {e}")
-        return "I apologize, but I'm having trouble processing your request right now. Please try again later."
+    # If both fail, return fallback message
+    return "I apologize, but I'm having trouble processing your request right now. Please try again later."
 
 
 def _run_coro_sync(coro_fn, *args, **kwargs):
@@ -147,9 +204,20 @@ def get_structured_llm_response(
             # Strip markdown code blocks if present
             cleaned = re.sub(r'^```json\s*|\s*```$', '', response.strip(), flags=re.MULTILINE)
             cleaned = re.sub(r'^```\s*|\s*```$', '', cleaned.strip(), flags=re.MULTILINE)
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
+            
+            # Handle case where LLM returns explanatory text before JSON
+            if '{' in cleaned and '}' in cleaned:
+                # Extract JSON from the response
+                start_idx = cleaned.find('{')
+                end_idx = cleaned.rfind('}') + 1
+                json_str = cleaned[start_idx:end_idx]
+                return json.loads(json_str)
+            else:
+                return json.loads(cleaned)
+        except json.JSONDecodeError as e:
             # Return default structure if parsing fails
+            print(f"⚠️ JSON parsing failed: {e}")
+            print(f"   Response was: {response[:200]}...")
             return {"error": "Failed to parse structured response", "raw_response": response}
             
     except Exception as e:

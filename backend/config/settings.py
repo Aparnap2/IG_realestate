@@ -21,6 +21,7 @@ class Config:
     META_APP_ID = os.getenv("META_APP_ID")
     META_APP_SECRET = os.getenv("META_APP_SECRET")
     META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
+    META_PAGE_ACCESS_TOKEN = os.getenv("META_PAGE_ACCESS_TOKEN")
     
     # Google Calendar configuration
     GOOGLE_CALENDAR_API_KEY = os.getenv("GOOGLE_CALENDAR_API_KEY")
@@ -33,3 +34,13 @@ class Config:
     # Celery configuration
     CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
     CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+
+# Create a singleton instance
+_settings_instance = None
+
+def get_settings():
+    """Get the singleton settings instance."""
+    global _settings_instance
+    if _settings_instance is None:
+        _settings_instance = Config()
+    return _settings_instance

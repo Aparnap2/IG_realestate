@@ -17,7 +17,12 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from api.webhooks import app, verify_meta_signature, META_APP_SECRET, META_VERIFY_TOKEN
+# Webhook tests now use main.py directly
+# from api.webhooks import app, verify_meta_signature, META_APP_SECRET, META_VERIFY_TOKEN
+from main import app
+import os
+META_APP_SECRET = os.getenv("META_APP_SECRET", "test_secret")
+META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN", "aaa_real_estate_verify_token_2025")
 from tasks.production_lead_processing import process_lead_message, ProductionLeadProcessor
 
 
@@ -125,9 +130,10 @@ class TestInstagramWebhookValidation:
         result = verify_meta_signature(payload_bytes, "")
         assert result is False
     
-    @patch('api.webhooks.process_lead_message')
-    @patch('api.webhooks.os.getenv')
-    def test_webhook_post_success_development_mode(self, mock_getenv, mock_process_message,
+    # @patch('api.webhooks.process_lead_message')
+    # @patch('api.webhooks.os.getenv')
+    # def test_webhook_post_success_development_mode(self, mock_getenv, mock_process_message,
+    def test_webhook_post_success_development_mode(self,
                                                   client, sample_webhook_payload):
         """Test successful webhook POST in development mode (signature verification skipped)"""
         # Mock development mode
@@ -159,9 +165,10 @@ class TestInstagramWebhookValidation:
         assert "sender_id" in data["results"][0]
         assert "processing_time" in data["results"][0]
     
-    @patch('api.webhooks.process_lead_message')
-    @patch('api.webhooks.os.getenv')
-    def test_webhook_post_success_production_mode(self, mock_getenv, mock_process_message,
+    # @patch('api.webhooks.process_lead_message')
+    # @patch('api.webhooks.os.getenv')
+    # def test_webhook_post_success_production_mode(self, mock_getenv, mock_process_message,
+    def test_webhook_post_success_production_mode(self,
                                                  client, sample_webhook_payload,
                                                  signed_webhook_headers):
         """Test successful webhook POST in production mode (signature verification required)"""
@@ -200,8 +207,9 @@ class TestInstagramWebhookValidation:
         assert data["status"] == "success"
         assert data["processed"] == 1
     
-    @patch('api.webhooks.os.getenv')
-    def test_webhook_post_invalid_signature_production(self, mock_getenv,
+    # @patch('api.webhooks.os.getenv')
+    # def test_webhook_post_invalid_signature_production(self, mock_getenv,
+    def test_webhook_post_invalid_signature_production(self,
                                                       client, sample_webhook_payload):
         """Test webhook POST with invalid signature in production mode"""
         # Mock production mode
@@ -223,8 +231,9 @@ class TestInstagramWebhookValidation:
         assert response.status_code == 403
         assert "Invalid signature" in response.json()["detail"]
     
-    @patch('api.webhooks.os.getenv')
-    def test_webhook_post_invalid_object_type(self, mock_getenv, client, sample_webhook_payload):
+    # @patch('api.webhooks.os.getenv')
+    # def test_webhook_post_invalid_object_type(self, mock_getenv, client, sample_webhook_payload):
+    def test_webhook_post_invalid_object_type(self, client, sample_webhook_payload):
         """Test webhook POST with invalid object type"""
         # Mock development mode to skip signature verification
         mock_getenv.return_value = "development"
@@ -243,8 +252,9 @@ class TestInstagramWebhookValidation:
         assert data["status"] == "ignored"
         assert data["reason"] == "not_instagram"
     
-    @patch('api.webhooks.os.getenv')
-    def test_webhook_post_invalid_json(self, mock_getenv, client):
+    # @patch('api.webhooks.os.getenv')
+    # def test_webhook_post_invalid_json(self, mock_getenv, client):
+    def test_webhook_post_invalid_json(self, client):
         """Test webhook POST with invalid JSON"""
         # Mock development mode to skip signature verification
         mock_getenv.return_value = "development"
@@ -258,9 +268,10 @@ class TestInstagramWebhookValidation:
         assert response.status_code == 400
         assert "Invalid JSON" in response.json()["detail"]
     
-    @patch('api.webhooks.process_lead_message')
-    @patch('api.webhooks.os.getenv')
-    def test_webhook_post_multiple_messages(self, mock_getenv, mock_process_message, client):
+    # @patch('api.webhooks.process_lead_message')
+    # @patch('api.webhooks.os.getenv')
+    # def test_webhook_post_multiple_messages(self, mock_getenv, mock_process_message, client):
+    def test_webhook_post_multiple_messages(self, client):
         """Test webhook POST with multiple messages"""
         # Mock development mode to skip signature verification
         mock_getenv.return_value = "development"
@@ -315,9 +326,10 @@ class TestInstagramWebhookValidation:
         assert data["processed"] == 2
         assert len(data["results"]) == 2
     
-    @patch('api.webhooks.process_lead_message')
-    @patch('api.webhooks.os.getenv')
-    def test_webhook_post_message_processing_error(self, mock_getenv, mock_process_message, client):
+    # @patch('api.webhooks.process_lead_message')
+    # @patch('api.webhooks.os.getenv')
+    # def test_webhook_post_message_processing_error(self, mock_getenv, mock_process_message, client):
+    def test_webhook_post_message_processing_error(self, client):
         """Test webhook POST when message processing fails"""
         # Mock development mode to skip signature verification
         mock_getenv.return_value = "development"
@@ -371,8 +383,9 @@ class TestInstagramWebhookValidation:
         assert "meta_app_secret_configured" in data
         assert "verify_token_configured" in data
     
-    @patch('api.webhooks.process_webhook')
-    def test_webhook_test_endpoint(self, mock_process_webhook, client):
+    # @patch('api.webhooks.process_webhook')
+    # def test_webhook_test_endpoint(self, mock_process_webhook, client):
+    def test_webhook_test_endpoint(self, client):
         """Test webhook test endpoint"""
         mock_task = MagicMock()
         mock_task.id = "test_task_123"
