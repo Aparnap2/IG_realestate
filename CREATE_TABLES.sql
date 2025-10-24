@@ -1,15 +1,14 @@
--- PRD-Aligned AAA Real Estate Database Schema
+-- Simplified Instagram DM Automation Database Schema
 -- Execute this in Supabase SQL Editor
 
 -- Drop existing tables if they exist
 DROP TABLE IF EXISTS lead_events CASCADE;
 DROP TABLE IF EXISTS audit_logs CASCADE;
-DROP TABLE IF EXISTS companies CASCADE;
 DROP TABLE IF EXISTS tour_schedules CASCADE;
 DROP TABLE IF EXISTS properties CASCADE;
 DROP TABLE IF EXISTS leads CASCADE;
 
--- Create enhanced leads table with PRD compliance
+-- Create simplified leads table for Instagram DM automation
 CREATE TABLE IF NOT EXISTS leads (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     
@@ -25,6 +24,7 @@ CREATE TABLE IF NOT EXISTS leads (
     desired_bedrooms INTEGER,
     location VARCHAR,
     timeline VARCHAR, -- "immediate" | "1-3months" | "3-6months" | "exploring"
+    property_type VARCHAR,
     
     -- Engagement tracking
     engagement_score FLOAT DEFAULT 0 CHECK (engagement_score >= 0 AND engagement_score <= 1),
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS leads (
     last_interaction_at TIMESTAMP WITH TIME ZONE,
     
     -- Lead source & attribution
-    source VARCHAR DEFAULT 'instagram' CHECK (source IN ('instagram', 'whatsapp', 'web')),
+    source VARCHAR DEFAULT 'instagram' CHECK (source IN ('instagram', 'web')),
     utm_source VARCHAR,
     utm_medium VARCHAR,
     utm_campaign VARCHAR,
@@ -59,10 +59,9 @@ CREATE TABLE IF NOT EXISTS leads (
     messages JSONB DEFAULT '[]'::jsonb,
     
     -- Legacy fields for backward compatibility
-    channel VARCHAR DEFAULT 'instagram',
+    channel VARCHAR DEFAULT 'instagram' CHECK (channel IN ('instagram', 'web', 'email')),
     user_id VARCHAR,
     qualified_score FLOAT CHECK (qualified_score >= 0 AND qualified_score <= 1),
-    property_type VARCHAR,
     meeting_slot TIMESTAMP WITH TIME ZONE,
     history JSONB DEFAULT '[]'::jsonb,
     tcpa_opt_in BOOLEAN,
@@ -87,60 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at);
 CREATE INDEX IF NOT EXISTS idx_leads_last_interaction_at ON leads(last_interaction_at);
 CREATE INDEX IF NOT EXISTS idx_leads_langgraph_thread_id ON leads(langgraph_thread_id) WHERE langgraph_thread_id IS NOT NULL;
 
--- Create companies table for multi-tenant support
-CREATE TABLE IF NOT EXISTS companies (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    slug TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    industry TEXT DEFAULT 'general',
-    is_active BOOLEAN DEFAULT TRUE,
-    instagram_user_id TEXT,
-    instagram_username TEXT,
-    meta_app_id TEXT,
-    access_token TEXT,
-    webhook_verify_token TEXT,
-    settings JSONB DEFAULT '{}'::jsonb,
-    subscription_tier TEXT DEFAULT 'starter',
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Create indexes for companies table
-CREATE INDEX IF NOT EXISTS idx_companies_slug ON companies(slug);
-CREATE INDEX IF NOT EXISTS idx_companies_is_active ON companies(is_active);
-CREATE INDEX IF NOT EXISTS idx_companies_industry ON companies(industry);
-
--- Enable Row Level Security (RLS) for companies
-ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
-
--- Create policy to allow public read access for active companies
-CREATE POLICY IF NOT EXISTS "Allow public read for active companies"
-    ON companies
-    FOR SELECT
-    USING (is_active = true);
-
--- Create policy to allow companies to access their own data
-CREATE POLICY IF NOT EXISTS "Allow company access to own data"
-    ON companies
-    FOR ALL
-    USING (true);
-
--- Create function to automatically update updated_at timestamp for companies
-CREATE OR REPLACE FUNCTION handle_companies_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Create trigger to automatically update updated_at for companies
-CREATE TRIGGER handle_companies_updated_at
-    BEFORE UPDATE ON companies
-    FOR EACH ROW
-    EXECUTE FUNCTION handle_companies_updated_at();
-
--- Create enhanced properties table
+-- Create simplified properties table (no multi-tenant support)
 CREATE TABLE IF NOT EXISTS properties (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     
@@ -179,6 +125,14 @@ CREATE TABLE IF NOT EXISTS properties (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Create indexes for properties table
+CREATE INDEX IF NOT EXISTS idx_properties_mls_id ON properties(mls_id);
+CREATE INDEX IF NOT EXISTS idx_properties_location ON properties(location);
+CREATE INDEX IF NOT EXISTS idx_properties_property_type ON properties(property_type);
+CREATE INDEX IF NOT EXISTS idx_properties_price ON properties(price);
+CREATE INDEX IF NOT EXISTS idx_properties_is_available ON properties(is_available);
+CREATE INDEX IF NOT EXISTS idx_properties_created_at ON properties(created_at);
+
 -- Create configs table
 CREATE TABLE IF NOT EXISTS configs (
     key VARCHAR PRIMARY KEY,
@@ -186,6 +140,50 @@ CREATE TABLE IF NOT EXISTS configs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Enable Row Level Security (RLS) for all tables
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE properties ENABLE ROW LEVEL SECURITY;
+ALTER TABLE configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tour_schedules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lead_events ENABLE ROW LEVEL SECURITY;
+
+-- Create RLS policies for leads table (simplified - no company scoping)
+CREATE POLICY IF NOT EXISTS "Allow all access to leads"
+    ON leads
+    FOR ALL
+    USING (true);
+
+-- Create RLS policies for properties table (simplified - no company scoping)
+CREATE POLICY IF NOT EXISTS "Allow all access to properties"
+    ON properties
+    FOR ALL
+    USING (true);
+
+-- Create RLS policies for configs table (global access)
+CREATE POLICY IF NOT EXISTS "Allow all access to configs"
+    ON configs
+    FOR ALL
+    USING (true);
+
+-- Create RLS policies for audit_logs table (allow access for compliance)
+CREATE POLICY IF NOT EXISTS "Allow all access to audit logs"
+    ON audit_logs
+    FOR ALL
+    USING (true);
+
+-- Create RLS policies for tour_schedules table (simplified - no company scoping)
+CREATE POLICY IF NOT EXISTS "Allow all access to tour schedules"
+    ON tour_schedules
+    FOR ALL
+    USING (true);
+
+-- Create RLS policies for lead_events table (simplified - no company scoping)
+CREATE POLICY IF NOT EXISTS "Allow all access to lead events"
+    ON lead_events
+    FOR ALL
+    USING (true);
 
 -- Create audit_logs table for compliance tracking
 CREATE TABLE IF NOT EXISTS audit_logs (
@@ -262,7 +260,7 @@ CREATE TABLE IF NOT EXISTS tour_schedules (
 CREATE TABLE IF NOT EXISTS lead_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     lead_id UUID REFERENCES leads(id) ON DELETE CASCADE,
-    event_type VARCHAR NOT NULL CHECK (event_type IN ('created', 'qualified', 'scheduled', 'booked', 'interrupted', 'approved', 'rejected', 'error')),
+    event_type VARCHAR NOT NULL CHECK (event_type IN ('created', 'qualified', 'scheduled', 'booked', 'interrupted', 'approved', 'rejected', 'error', 'message', 'assistant_response', 'qualification', 'property_search')),
     event_data JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -275,15 +273,15 @@ CREATE INDEX IF NOT EXISTS idx_lead_events_created_at ON lead_events(created_at)
 -- Insert enhanced sample data
 INSERT INTO properties (mls_id, price, address, location, property_type, bedrooms, bathrooms, square_feet, year_built, latitude, longitude, amenities, details, description) VALUES
 ('MIA001', 250000, '123 Ocean Dr #1B', 'Miami Beach', 'Condo', 1, 1, 800, 2020, 25.7907, -80.1300, '{"pool": true, "parking": true, "gym": true}', '{"view": "ocean", "floor": "1"}', 'Beautiful oceanview condo in the heart of South Beach'),
-('MIA002', 350000, '456 Brickell Ave #12A', 'Miami', 'Condo', 2, 2, 1200, 2021, 25.7617, -80.1918, '{"pool": true, "parking": true, "gym": true, "concierge": true}', '{"view": "city", "floor": "12"}', 'Modern Brickell condo with amazing city views'),
-('MIA003', 500000, '789 Coral Way #3B', 'Coral Gables', 'House', 3, 2.5, 1600, 2022, 25.7517, -80.2580, '{"pool": true, "parking": true, "garden": true, "balcony": true}', '{"lot_size": "5000 sq ft", "garage": "2 car"}', 'Lovely Coral Gables home with pool and garden'),
+('MIA002', 350000, '456 Brickell Ave #12A', 'Miami', 'Condo', 2, 2, 1200, 2021, 25.7617, -80.1918, '{"pool": true, "parking": true, "gym": true, "concierge": True}', '{"view": "city", "floor": "12"}', 'Modern Brickell condo with amazing city views'),
+('MIA003', 500000, '789 Coral Way #3B', 'Coral Gables', 'House', 3, 2.5, 1600, 2022, 25.7517, -80.2580, '{"pool": true, "parking": true, "garden": True, "balcony": True}', '{"lot_size": "5000 sq ft", "garage": "2 car"}', 'Lovely Coral Gables home with pool and garden'),
 ('ORL001', 300000, '321 Main St #5C', 'Orlando', 'Condo', 2, 2, 1100, 2019, 28.5383, -81.3789, '{"parking": true, "gym": false}', '{"view": "park", "floor": "5"}', 'Affordable Orlando condo near downtown'),
-('TAM001', 450000, '654 Beach Blvd #2A', 'Tampa', 'Condo', 2, 2, 1400, 2023, 27.9474, -82.4584, '{"pool": true, "parking": true, "gym": true, "beach_access": true}', '{"view": "gulf", "floor": "2"}', 'Gulf-facing condo with beautiful sunset views'),
-('MIA004', 750000, '999 Sunset Dr', 'Miami', 'House', 4, 3, 2200, 2020, 25.7010, -80.3050, '{"pool": true, "parking": true, "garden": true, "outdoor_kitchen": true}', '{"lot_size": "8000 sq ft", "garage": "3 car"}', 'Luxury Miami home with resort-style backyard'),
-('FLL001', 425000, '111 Las Olas Blvd #8B', 'Fort Lauderdale', 'Condo', 2, 2, 1300, 2021, 26.1224, -80.1433, '{"pool": true, "parking": true, "gym": true, "waterfront": true}', '{"view": "intracoastal", "floor": "8"}', 'Waterfront condo with boat access'),
-('WPB001', 375000, '222 Palm Beach Rd', 'West Palm Beach', 'House', 3, 2, 1800, 2018, 26.7125, -80.0519, '{"pool": false, "parking": true, "garden": true}', '{"lot_size": "6000 sq ft", "garage": "2 car"}, 'Charming West Palm home perfect for families');
+('TAM001', 450000, '654 Beach Blvd #2A', 'Tampa', 'Condo', 2, 2, 1400, 2023, 27.9474, -82.4584, '{"pool": true, "parking": True, "gym": True, "beach_access": True}', '{"view": "gulf", "floor": "2"}', 'Gulf-facing condo with beautiful sunset views'),
+('MIA004', 750000, '999 Sunset Dr', 'Miami', 'House', 4, 3, 2200, 2020, 25.7010, -80.3050, '{"pool": True, "parking": True, "garden": True, "outdoor_kitchen": True}', '{"lot_size": "8000 sq ft", "garage": "3 car"}', 'Luxury Miami home with resort-style backyard'),
+('FLL001', 425000, '111 Las Olas Blvd #8B', 'Fort Lauderdale', 'Condo', 2, 2, 1300, 2021, 26.1224, -80.1433, '{"pool": True, "parking": True, "gym": True, "waterfront": True}', '{"view": "intracoastal", "floor": "8"}', 'Waterfront condo with boat access'),
+('WPB001', 375000, '222 Palm Beach Rd', 'West Palm Beach', 'House', 3, 2, 1800, 2018, 26.7125, -80.0519, '{"pool": false, "parking": True, "garden": True}', '{"lot_size": "6000 sq ft", "garage": "2 car"}, 'Charming West Palm home perfect for families');
 
--- Insert enhanced configs
+-- Insert simplified configs
 INSERT INTO configs (key, value) VALUES
 ('qualifier_prompt', '{"system": "You are a real estate qualification specialist. Score leads 0-1 and extract key information.", "instruction": "Analyze the lead message and provide: score (0-1), budget, location, property_type, timeline, reasoning, and next_actions."}', 'hitl_threshold', '0.9'),
 ('scheduler_prompt', '{"system": "You are a real estate scheduling expert using Google Calendar optimization.", "instruction": "Coordinate property tours, optimize travel time, and handle cancellations proactively."}', 'followup_prompt', '{"system": "You are a real estate nurture specialist with temporal memory.", "instruction": "Provide personalized property recommendations based on lead history and market changes."}'),
@@ -336,17 +334,3 @@ CREATE TRIGGER update_properties_updated_at
 CREATE TRIGGER update_tour_schedules_updated_at
     BEFORE UPDATE ON tour_schedules
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- Insert sample company data for ngrok subdomain
-INSERT INTO companies (slug, name, webhook_verify_token, is_active)
-VALUES (
-    '5f3d72cd9867',
-    'Real Estate Demo',
-    'aaa_real_estate_verify_token_2025',
-    true
-)
-ON CONFLICT (slug) DO UPDATE SET
-    name = EXCLUDED.name,
-    webhook_verify_token = EXCLUDED.webhook_verify_token,
-    is_active = EXCLUDED.is_active,
-    updated_at = NOW();

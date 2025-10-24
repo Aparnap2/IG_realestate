@@ -10,7 +10,7 @@
 - **Frontend**: React (Vite + shadcn/ui) at `/frontend`
 - **Backend**: FastAPI with LangGraph swarm at `/backend`
 - **Database**: Supabase for auth/DB, Redis for state/caching
-- **Integrations**: Meta (IG/WhatsApp), Google Calendar, HubSpot, OpenRouter
+- **Integrations**: Meta (IG/ ), Google Calendar, HubSpot, OpenRouter
 
 ## Testing Strategy
 - E2E tests with Playwright for frontend workflows

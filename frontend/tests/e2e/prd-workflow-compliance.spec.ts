@@ -221,15 +221,15 @@ test.describe('PRD Workflow Compliance - AAA Real Estate Lead Capture', () => {
       console.log('⚠️ Instagram webhook format not supported');
     }
     
-    // Test Meta webhook format compliance (WhatsApp)
+    // Test Meta webhook format compliance ( )
     const waWebhookData = {
-      object: 'whatsapp_business_account',
+      object: ' _business_account',
       entry: [{
         changes: [{
           value: {
             messages: [{
               from: 'wa_test_sender_456',
-              text: { body: 'Test WhatsApp message for luxury condo $500k' },
+              text: { body: 'Test   message for luxury condo $500k' },
               id: 'wa_test_id_456'
             }]
           }
@@ -239,14 +239,14 @@ test.describe('PRD Workflow Compliance - AAA Real Estate Lead Capture', () => {
     
     try {
       const waResponse = await request.post(`${BACKEND_URL}/webhook/test`, {
-        data: { ...waWebhookData, channel: 'whatsapp' }
+        data: { ...waWebhookData, channel: ' ' }
       });
       
       if (waResponse.ok()) {
-        console.log('✓ WhatsApp webhook format supported');
+        console.log('✓   webhook format supported');
       }
     } catch (error) {
-      console.log('⚠️ WhatsApp webhook format not supported');
+      console.log('⚠️   webhook format not supported');
     }
   });
 

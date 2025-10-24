@@ -95,7 +95,7 @@ export default function LeadsTable({ leads, isLoading, company }: LeadsTableProp
                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                         lead.channel === 'ig' ? 'bg-pink-100 text-pink-800' : 'bg-green-100 text-green-800'
                       }`}>
-                        {lead.channel === 'ig' ? 'Instagram' : 'WhatsApp'}
+                        {lead.channel === 'ig' ? 'Instagram' : ' '}
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">

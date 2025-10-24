@@ -41,14 +41,14 @@ const AVAILABLE_INTEGRATIONS: IntegrationType[] = [
     ]
   },
   {
-    type: 'whatsapp',
-    name: 'WhatsApp Business',
-    description: 'Connect WhatsApp Business API for messaging',
+    type: ' ',
+    name: '  Business',
+    description: 'Connect   Business API for messaging',
     icon: '💬',
     fields: [
-      { key: 'phone_number_id', label: 'Phone Number ID', type: 'text', required: true, placeholder: 'WhatsApp Phone Number ID' },
-      { key: 'access_token', label: 'Access Token', type: 'password', required: true, placeholder: 'WhatsApp Access Token' },
-      { key: 'app_secret', label: 'App Secret', type: 'password', required: true, placeholder: 'WhatsApp App Secret' },
+      { key: 'phone_number_id', label: 'Phone Number ID', type: 'text', required: true, placeholder: '  Phone Number ID' },
+      { key: 'access_token', label: 'Access Token', type: 'password', required: true, placeholder: '  Access Token' },
+      { key: 'app_secret', label: 'App Secret', type: 'password', required: true, placeholder: '  App Secret' },
       { key: 'verify_token', label: 'Verify Token', type: 'text', required: true, placeholder: 'Webhook verify token' }
     ]
   },

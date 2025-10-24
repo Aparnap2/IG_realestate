@@ -1,1 +1,1 @@
-from tasks.lead_processing import process_lead
+from .production_lead_processing import process_lead_message

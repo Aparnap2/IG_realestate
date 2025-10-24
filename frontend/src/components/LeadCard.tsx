@@ -27,8 +27,8 @@ export function LeadCard({ lead }: LeadCardProps) {
     switch (channel) {
       case 'ig':
         return <Badge variant="secondary">Instagram</Badge>
-      case 'whatsapp':
-        return <Badge variant="secondary">WhatsApp</Badge>
+      case ' ':
+        return <Badge variant="secondary"> </Badge>
       default:
         return <Badge variant="secondary">{channel}</Badge>
     }

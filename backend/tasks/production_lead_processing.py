@@ -1,806 +1,525 @@
-#!/usr/bin/env python3
 """
-Production-grade lead processing for AAA Real Estate System.
-Implements the complete PRD workflow with LangGraph swarm.
+Production Lead Processing Module for Instagram DM Automation
+
+Enhanced with sophisticated qualification flow and value delivery:
+- Lead scoring with >=0.75 → scheduler, <0.75 → followup, <0.4 → offramp
+- Progressive qualification with intelligent field mapping
+- Conversation branching based on scores and intents
+- Value delivery integration
+- Compliance checks and state tracking
 """
 
-import os
 import sys
-import json
-import uuid
+import os
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 # Add the parent directory to the path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from dotenv import load_dotenv
-load_dotenv()
-
-# Import required modules
-from utils.supabase_client import supabase, query_properties_db, save_lead, get_config
-from utils.redis_client import redis_client
-from models.lead import Lead
+from utils.supabase_client import save_or_update_lead, query_properties_db
 from utils.audit import audit_log_event
-from tools.compliance import fair_housing_evaluator, gdpr_tcpa_tracker
 from temporal.graph_client import get_graphiti_client
-from utils.llm_client import extract_lead_info as llm_extract_lead_info, get_llm_response_sync
-from tools.agent_tools import query_properties_tool
+from utils.llm_client import extract_lead_info, generate_response_message
+from tools.compliance import fair_housing_evaluator
+from utils.redis_client import (
+    store_thread_state,
+    get_thread_state,
+    get_temporary_data,
+    store_temporary_data,
+    get_conversation_state,
+    set_conversation_state,
+    update_conversation_state,
+    add_asked_question,
+    has_asked_question,
+    get_current_question,
+    set_current_question,
+)
+from tools import agent_tools
+from utils.lead_scoring import calculate_lead_score, get_next_qualification_question, lead_scorer
+from tasks.booking_flow import get_booking_manager
+from integrations.hubspot_client import sync_lead_to_hubspot, sync_conversation_to_hubspot
+# from agents.prd_compliant_workflow import extract_user_profile  # Temporarily disabled
+
 
 class ProductionLeadProcessor:
-    """Production-grade lead processor implementing PRD workflow"""
-    
+    """
+    Handles lead processing for Instagram DM automation.
+
+    Key Features:
+    - Lead information extraction using LLM
+    - Property database search
+    - Qualification scoring
+    - Compliance checking
+    - Dynamic response generation
+    """
+
     def __init__(self):
-        self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-        self.model = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free")
-        self.graph_client = get_graphiti_client()
-    
-    async def process_lead_message(self, user_id: str, message: str, channel: str, user_name: str = None) -> Dict[str, Any]:
-        """
-        Process a lead message through the complete PRD workflow.
-        
-        Args:
-            user_id: User identifier from Meta API
-            message: Lead's message text
-            channel: Channel (ig/whatsapp)
-            
-        Returns:
-            Processing result with lead data and next steps
-        """
-        try:
-            print(f"🎯 PRD WORKFLOW: Starting lead processing for {user_id} via {channel}", flush=True)
-            print(f"📝 MESSAGE: '{message}' from {user_name or 'Unknown'}", flush=True)
-            # Step 1: Create or update lead
-            lead_data = {
-                "user_id": user_id,
-                "channel": channel,
-                "message": message,
-                "status": "new",
-                "last_interaction_at": datetime.now().isoformat(),
-                "history": [
-                    {
-                        "message": message,
-                        "timestamp": datetime.now().isoformat(),
-                        "agent": "user",
-                        "details": "Initial message received"
-                    }
-                ]
-            }
-            
-            if user_name:
-                lead_data["name"] = user_name
+        self.graphiti_client = get_graphiti_client()
 
-            # Compliance logging for inbound message
-            gdpr_tcpa_tracker(
-                lead_id=user_id,
-                event="message_received",
-                metadata={
-                    "channel": channel,
-                    "message_length": len(message),
-                    "timestamp": datetime.now().isoformat()
-                }
-            )
-
-            audit_log_event(
-                event_type="instagram_message_received",
-                payload={
-                    "user_id": user_id,
-                    "channel": channel,
-                    "message": message
-                },
-                entity_type="lead",
-                entity_id=user_id,
-                agent_type="ingest"
-            )
-            
-            # Save lead to database
-            saved_lead = save_lead(lead_data)
-            lead_id = saved_lead.get("id")
-            if lead_id:
-                lead_data["id"] = lead_id
-            
-            print(f"✅ Lead created: {lead_id}")
-
-            print(f"🕒 TEMPORAL KG: Recording message event in Graphiti", flush=True)
-            await self._record_temporal_event(
-                lead_id=lead_id or user_id,
-                event_type="message",
-                event_data={
-                    "direction": "inbound",
-                    "channel": channel,
-                    "content": message
-                }
-            )
-            
-            # Step 2: Extract lead information using LLM
-            print(f"🤖 LLM EXTRACTION: Using OpenRouter to extract structured info", flush=True)
-            extracted_info = await self.extract_lead_info(message)
-            
-            # Update lead with extracted info
-            if extracted_info:
-                lead_data.update(extracted_info)
-                lead_data["id"] = lead_id
-                saved_lead = save_lead(lead_data)
-            
-            print(f"✅ Lead info extracted: {extracted_info}", flush=True)
-            
-            # Step 3: Query properties database using LLM function calling
-            print(f"🏠 PROPERTY SEARCH: Using LLM function calling to query database", flush=True)
-            db_results = await self._query_properties_with_llm(extracted_info)
-            print(f"✅ Found {len(db_results)} matching properties", flush=True)
-            
-            # Step 4: Qualify lead using LLM
-            print(f"🎯 QUALIFIER: Scoring lead with PRD criteria", flush=True)
-            qualification_result = await self.qualify_lead(extracted_info, db_results)
-            
-            # Update lead with qualification
-            lead_data["qualified_score"] = qualification_result["score"]
-            lead_data["status"] = "qualified" if qualification_result["score"] > 0.7 else "new"
-            lead_data["history"].append({
-                "message": f"Lead qualified with score: {qualification_result['score']}",
-                "timestamp": datetime.now().isoformat(),
-                "agent": "qualifier",
-                "details": qualification_result["reasoning"]
-            })
-            
-            saved_lead = save_lead(lead_data)
-            
-            print(f"✅ Lead qualified: {qualification_result['score']}")
-            
-            # Step 5: Determine next agent and actions
-            print(f"🧭 ROUTER: Determining next agent based on qualification", flush=True)
-            next_agent = await self.determine_next_agent(qualification_result, extracted_info)
-            print(f"   📍 Next agent: {next_agent}", flush=True)
-            
-            # Step 6: Generate response message
-            print(f"💬 RESPONSE GEN: Creating dynamic AI response", flush=True)
-            response_message = await self.generate_response_message(
-                extracted_info, db_results, qualification_result, next_agent, user_name
-            )
-
-            print(f"⚖️ COMPLIANCE: Applying fair-housing evaluation", flush=True)
-            response_message, compliance_meta = await self._apply_compliance_guardrails(
-                lead_identifier=lead_id or user_id,
-                user_id=user_id,
-                message=response_message,
-                lead_snapshot=lead_data
-            )
-            print(f"   ✅ Compliance status: {compliance_meta.get('passed', 'unknown')}", flush=True)
-
-            gdpr_tcpa_tracker(
-                lead_id=user_id,
-                event="message_sent",
-                metadata={
-                    "channel": channel,
-                    "message_length": len(response_message),
-                    "timestamp": datetime.now().isoformat(),
-                    "compliance_passed": compliance_meta.get("passed", True)
-                }
-            )
-
-            audit_log_event(
-                event_type="assistant_response",
-                payload={
-                    "lead_id": lead_id,
-                    "message": response_message,
-                    "next_agent": next_agent,
-                    "compliance": compliance_meta
-                },
-                entity_type="lead",
-                entity_id=user_id,
-                agent_type="router"
-            )
-
-            lead_data.setdefault("history", []).append({
-                "message": response_message,
-                "timestamp": datetime.now().isoformat(),
-                "agent": "assistant",
-                "details": compliance_meta.get("reason")
-            })
-            lead_data["last_interaction_at"] = datetime.now().isoformat()
-
-            await self._record_temporal_event(
-                lead_id=lead_id or user_id,
-                event_type="assistant_response",
-                event_data={
-                    "message": response_message,
-                    "next_agent": next_agent,
-                    "compliance": compliance_meta
-                }
-            )
-
-            save_lead(lead_data)
-            
-            # Step 7: Store state in Redis (LangGraph checkpointer simulation)
-            print(f"🔄 LANGGRAPH: Storing conversation state in Redis", flush=True)
-            try:
-                print(f"   🧵 Thread ID: langgraph:thread:{user_id}", flush=True)
-                print(f"   📊 State components: lead, messages, db_results, qualification, next_agent, compliance", flush=True)
-                print(f"   🎯 Next agent: {next_agent}", flush=True)
-                print(f"   ⚖️ Compliance passed: {compliance_meta.get('passed', 'unknown')}", flush=True)
-                
-                thread_state = {
-                    "lead": lead_data,
-                    "messages": [
-                        {"role": "user", "content": message},
-                        {"role": "assistant", "content": response_message}
-                    ],
-                    "db_results": db_results,
-                    "qualification": qualification_result,
-                    "next_agent": next_agent,
-                    "compliance": compliance_meta,
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                redis_client.setex(
-                    f"langgraph:thread:{user_id}",
-                    86400,  # 24 hours
-                    json.dumps(thread_state, default=str)
-                )
-                
-                print(f"   ✅ State stored in Redis for thread: {user_id}", flush=True)
-                print(f"   💾 TTL: 24 hours", flush=True)
-            except Exception as redis_error:
-                print(f"   ❌ Redis error: {redis_error}", flush=True)
-            
-            # Step 8: Handle HITL if needed
-            print(f"👥 HITL: Checking if human review is needed", flush=True)
-            interrupt_needed = await self.check_hitl_interrupt(qualification_result, extracted_info)
-            print(f"   🚨 HITL interrupt: {interrupt_needed}", flush=True)
-            
-            return {
-                "lead_id": lead_id,
-                "user_id": user_id,
-                "qualified_score": qualification_result["score"],
-                "next_agent": next_agent,
-                "response_message": response_message,
-                "properties_found": len(db_results),
-                "interrupt_needed": interrupt_needed,
-                "status": "success"
-            }
-            
-        except Exception as e:
-            print(f"❌ Error processing lead: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-                "user_id": user_id
-            }
-    
-    async def extract_lead_info(self, message: str) -> Dict[str, Any]:
-        """Extract structured information from lead message using pattern matching"""
-        
-        import re
-        
-        extracted = {}
-        message_lower = message.lower()
-        
-        # Extract budget
-        budget_patterns = [
-            r'\$(\d+)k',  # $350k
-            r'\$(\d+),?(\d+)',  # $350,000
-            r'budget.*?\$?(\d+)k',  # budget $350k
-            r'(\d+)k.*?budget',  # 350k budget
-        ]
-        
-        for pattern in budget_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                if 'k' in pattern:
-                    extracted['budget'] = int(match.group(1)) * 1000
-                else:
-                    budget_str = match.group(1) + (match.group(2) if match.lastindex > 1 else '')
-                    extracted['budget'] = int(budget_str)
-                break
-        
-        # Extract location
-        locations = ['miami', 'orlando', 'tampa', 'jacksonville', 'miami beach', 'fort lauderdale']
-        for location in locations:
-            if location in message_lower:
-                extracted['location'] = location.title()
-                break
-        
-        # Extract property type
-        property_types = ['1bhk', '2bhk', '3bhk', 'condo', 'apartment', 'house', 'penthouse']
-        for prop_type in property_types:
-            if prop_type in message_lower:
-                extracted['property_type'] = prop_type.upper() if 'bhk' in prop_type else prop_type.title()
-                break
-        
-        # Extract timeline
-        if any(word in message_lower for word in ['asap', 'urgent', 'immediately', 'soon']):
-            extracted['timeline'] = 'ASAP'
-        elif any(word in message_lower for word in ['flexible', 'no rush', 'whenever']):
-            extracted['timeline'] = 'flexible'
-        elif 'month' in message_lower:
-            month_match = re.search(r'(\d+)\s*month', message_lower)
-            if month_match:
-                extracted['timeline'] = f"{month_match.group(1)} months"
-        
-        # Extract name (simple pattern)
-        name_patterns = [r'i\'?m\s+([a-z]+)', r'my name is\s+([a-z]+)', r'this is\s+([a-z]+)']
-        for pattern in name_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                extracted['name'] = match.group(1).title()
-                break
-        
-        # Extract email
-        email_match = re.search(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b', message)
-        if email_match:
-            extracted['email'] = email_match.group()
-
-        try:
-            llm_enrichment = llm_extract_lead_info(message) or {}
-            
-            # Check if LLM extraction failed
-            if "error" in llm_enrichment:
-                print(f"   ⚠️ LLM extraction failed, using pattern matching fallback", flush=True)
-                llm_enrichment = self._fallback_extraction(message)
-            else:
-                print(f"   ✅ LLM extraction successful: {list(llm_enrichment.keys())}", flush=True)
-                
-            for key, value in llm_enrichment.items():
-                if value in (None, "") or key == "other_details":
-                    continue
-                extracted.setdefault(key, value)
-        except Exception as llm_error:
-            print(f"⚠️ LLM extraction fallback used: {llm_error}")
-        
-        return extracted
-    
-    def _fallback_extraction(self, message: str) -> Dict[str, Any]:
-        """Fallback extraction using pattern matching when LLM fails"""
-        import re
-        
-        extracted = {
-            "budget": None,
-            "location": None,
-            "property_type": None,
-            "timeline": None,
-            "other_details": message
-        }
-        
-        message_lower = message.lower()
-        
-        # Extract budget
-        budget_patterns = [
-            r'\$(\d+)k',  # $350k
-            r'\$(\d+),?(\d+)',  # $350,000
-            r'budget.*?\$?(\d+)k',  # budget $350k
-            r'(\d+)k.*?budget',  # 350k budget
-        ]
-        
-        for pattern in budget_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                if 'k' in pattern:
-                    extracted['budget'] = int(match.group(1)) * 1000
-                else:
-                    budget_str = match.group(1) + (match.group(2) if match.lastindex > 1 else '')
-                    extracted['budget'] = int(budget_str)
-                break
-        
-        # Extract location (Indian cities)
-        locations = ['mumbai', 'delhi', 'bangalore', 'hyderabad', 'pune', 'chennai', 'kolkata',
-                    'andheri', 'bandra', 'worli', 'juhu', 'goregaon', 'powai']
-        for location in locations:
-            if location in message_lower:
-                extracted['location'] = location.title()
-                break
-        
-        # Extract property type
-        property_types = ['1bhk', '2bhk', '3bhk', '4bhk', 'condo', 'apartment', 'house', 'penthouse', 'villa']
-        for prop_type in property_types:
-            if prop_type in message_lower:
-                extracted['property_type'] = prop_type.upper() if 'bhk' in prop_type else prop_type.title()
-                break
-        
-        # Extract timeline
-        if any(word in message_lower for word in ['asap', 'urgent', 'immediately', 'soon']):
-            extracted['timeline'] = 'ASAP'
-        elif any(word in message_lower for word in ['flexible', 'no rush', 'whenever']):
-            extracted['timeline'] = 'flexible'
-        elif 'month' in message_lower:
-            month_match = re.search(r'(\d+)\s*month', message_lower)
-            if month_match:
-                extracted['timeline'] = f"{month_match.group(1)} months"
-        
-        print(f"   🔧 Fallback extraction: budget={extracted['budget']}, location={extracted['location']}, property_type={extracted['property_type']}", flush=True)
-        return extracted
-    
-    async def qualify_lead(self, lead_info: Dict[str, Any], db_results: list) -> Dict[str, Any]:
-        """Qualify lead using LLM with PRD scoring criteria"""
-        
-        # Use rule-based qualification for now (can be enhanced with LLM later)
-        score = 0.3  # Base score
-        reasoning_parts = []
-        
-        budget = lead_info.get("budget", 0)
-        location = lead_info.get("location", "")
-        property_type = lead_info.get("property_type", "")
-        timeline = lead_info.get("timeline", "")
-        
-        # Budget scoring (PRD criteria)
-        if budget > 500000:
-            score += 0.4
-            reasoning_parts.append("High budget ($500k+)")
-        elif budget > 100000:
-            score += 0.2
-            reasoning_parts.append("Moderate budget ($100k+)")
-        
-        # Location match scoring
-        if location and db_results:
-            score += 0.3
-            reasoning_parts.append(f"Location match with {len(db_results)} properties")
-        elif location:
-            score += 0.1
-            reasoning_parts.append("Location specified")
-        
-        # Property type scoring
-        if property_type:
-            score += 0.2
-            reasoning_parts.append("Property type specified")
-        
-        # Timeline scoring
-        if timeline and timeline.lower() in ["asap", "urgent", "immediately"]:
-            score += 0.2
-            reasoning_parts.append("Urgent timeline")
-        elif timeline:
-            score += 0.1
-            reasoning_parts.append("Timeline specified")
-        
-        final_score = min(score, 1.0)
-        reasoning = f"Score: {final_score:.1f} - " + ", ".join(reasoning_parts)
-        
-        return {
-            "score": final_score,
-            "reasoning": reasoning
-        }
-        # Fallback scoring
-        score = 0.3  # Base score
-        if lead_info.get("budget", 0) > 500000:
-            score += 0.4
-        elif lead_info.get("budget", 0) > 100000:
-            score += 0.2
-        
-        if lead_info.get("location") and db_results:
-            score += 0.3
-        
-        if lead_info.get("property_type"):
-            score += 0.2
-        
-        return {
-            "score": min(score, 1.0),
-            "reasoning": "Fallback scoring based on budget and property match"
-        }
-    
-    async def determine_next_agent(self, qualification: Dict[str, Any], lead_info: Dict[str, Any]) -> str:
-        """Determine next agent based on PRD workflow rules"""
-        
-        score = qualification["score"]
-        budget = lead_info.get("budget", 0)
-        
-        # PRD Rules:
-        # - Score > 0.7: Scheduler
-        # - Budget > $500k: HITL first
-        # - Score <= 0.7: FollowUp
-        
-        if budget > 500000 and score > 0.9:
-            return "hitl"  # High-value lead needs human review
-        elif score > 0.7:
-            return "scheduler"
-        else:
-            return "followup"
-    
-    async def generate_response_message(self, lead_info: Dict[str, Any], db_results: list,
-                                      qualification: Dict[str, Any], next_agent: str, user_name: str = None) -> str:
-        """Generate dynamic AI response message based on qualification and next agent"""
-        
-        score = qualification["score"]
-        properties_count = len(db_results)
-        greeting = f"Hey {user_name}! " if user_name else "Hi! "
-        
-        # Build context for AI response generation
-        context = {
-            "user_name": user_name or "there",
-            "score": score,
-            "properties_count": properties_count,
-            "next_agent": next_agent,
-            "lead_info": lead_info,
-            "qualification_reasoning": qualification.get("reasoning", "")
-        }
-        
-        # Generate dynamic AI response
-        try:
-            from utils.llm_client import get_llm_response_sync
-            
-            # Build AI prompt based on context (fix formatting issues)
-            budget_str = f"${lead_info.get('budget', 0):,}" if lead_info.get('budget') else "not specified"
-            
-            prompt = f"""
-            Generate a personalized real estate response message with the following context:
-            
-            User: {context['user_name']}
-            Lead Score: {context['score']:.1f}/1.0
-            Properties Found: {context['properties_count']}
-            Next Action: {context['next_agent']}
-            
-            Lead Details:
-            - Budget: {budget_str}
-            - Location: {lead_info.get('location', 'not specified')}
-            - Property Type: {lead_info.get('property_type', 'not specified')}
-            - Timeline: {lead_info.get('timeline', 'not specified')}
-            
-            Qualification Reasoning: {context['qualification_reasoning']}
-            
-            Guidelines:
-            - Be friendly, professional, and personalized
-            - Reference their specific criteria when available
-            - For high scores (>0.7): Focus on scheduling/viewings
-            - For low scores (<=0.7): Focus on information gathering and nurturing
-            - If no properties found: Offer alternatives and future updates
-            - Keep it conversational and engaging
-            - End with a clear call to action
-            - Maximum 150 words
-            
-            Generate only the response message, no explanations.
-            """
-            
-            ai_response = get_llm_response_sync(prompt)
-            
-            # Clean up and validate AI response
-            if ai_response and len(ai_response.strip()) > 20:
-                return ai_response.strip()
-            else:
-                # Fallback to dynamic template if AI response is inadequate
-                return self._generate_fallback_response(context)
-                
-        except Exception as e:
-            print(f"⚠️ AI response generation failed: {e}")
-            # Fallback to dynamic template
-            return self._generate_fallback_response(context)
-    
-    def _generate_fallback_response(self, context: Dict[str, Any]) -> str:
-        """Generate fallback response when AI is unavailable"""
-        
-        user_name = context["user_name"]
-        score = context["score"]
-        properties_count = context["properties_count"]
-        next_agent = context["next_agent"]
-        lead_info = context["lead_info"]
-        
-        greeting = f"Hey {user_name}! " if user_name != "there" else "Hi! "
-        
-        # Personalize based on lead info
-        budget = lead_info.get('budget')
-        location = lead_info.get('location')
-        property_type = lead_info.get('property_type')
-        
-        # Build contextual response
-        if next_agent == "hitl":
-            message = f"{greeting}Thank you for your interest! Based on your requirements"
-            if budget:
-                message += f" for properties around ${budget:,}"
-            if location:
-                message += f" in {location}"
-            message += ", I found some excellent options that might be perfect for you. Let me connect you with our senior advisor who specializes in properties matching your criteria."
-            
-        elif next_agent == "scheduler":
-            message = f"{greeting}Great news! I found {properties_count} properties"
-            if location:
-                message += f" in {location}"
-            if budget:
-                message += f" within your budget of ${budget:,}"
-            message += ". I'd love to show you these options. Would you like to schedule a viewing this week?"
-            
-        else:  # followup
-            if properties_count > 0:
-                message = f"{greeting}Thank you for reaching out! I found {properties_count} properties"
-                if location:
-                    message += f" in {location}"
-                if property_type:
-                    message += f" that match your {property_type} preferences"
-                message += ". Let me share some details about what's available and help you explore your options."
-            else:
-                message = f"{greeting}Thank you for your interest! "
-                if location:
-                    message += f"While I don't have exact matches in {location} right now, "
-                else:
-                    message += f"While I don't have exact matches right now, "
-                message += "I'd love to understand your needs better and keep you updated on new listings that might interest you."
-        
-        return message
-    
-    async def check_hitl_interrupt(self, qualification: Dict[str, Any], lead_info: Dict[str, Any]) -> bool:
-        """Check if HITL interrupt is needed based on PRD criteria"""
-        
-        hitl_threshold = float(get_config("hitl_threshold", "0.9"))
-        high_value_budget = int(get_config("high_value_budget", "500000"))
-        
-        score = qualification["score"]
-        budget = lead_info.get("budget", 0)
-        
-        return score >= hitl_threshold or budget >= high_value_budget
-
-    async def _apply_compliance_guardrails(
+    async def process_lead_message(
         self,
-        lead_identifier: str,
         user_id: str,
         message: str,
-        lead_snapshot: Dict[str, Any]
-    ) -> tuple[str, Dict[str, Any]]:
-        """Evaluate outbound message against compliance policies."""
-        print(f"⚖️ COMPLIANCE: Applying fair-housing evaluation", flush=True)
-        print(f"   📝 Message: '{message[:50]}...'", flush=True)
-        print(f"   👤 Lead ID: {lead_identifier}", flush=True)
-        print(f"   💰 Budget: {lead_snapshot.get('budget', 'not specified')}", flush=True)
-        print(f"   📍 Location: {lead_snapshot.get('location', 'not specified')}", flush=True)
-        
+        channel: str = "instagram",
+        user_name: str = None
+    ) -> Dict[str, Any]:
+        """
+        Process incoming lead message through the complete workflow.
+
+        Args:
+            user_id: Instagram user ID (PSID)
+            message: Message content
+            channel: Channel source
+            user_name: Extracted user name
+
+        Returns:
+            Processing result with response message
+        """
         try:
-            evaluation = await fair_housing_evaluator(
-                message,
-                context={
-                    "lead_id": lead_identifier,
-                    "budget": lead_snapshot.get("budget"),
-                    "location": lead_snapshot.get("location"),
-                    "channel": lead_snapshot.get("channel")
-                }
-            )
-            
-            print(f"   ✅ Compliance evaluation completed", flush=True)
-            print(f"   🛡️ Passed: {evaluation.get('passed', 'unknown')}", flush=True)
-            if evaluation.get('violations'):
-                print(f"   ⚠️ Violations: {len(evaluation['violations'])}", flush=True)
-        except Exception as compliance_error:
-            print(f"   ❌ Compliance evaluation error: {compliance_error}", flush=True)
-            audit_log_event(
-                event_type="compliance_evaluation_error",
-                payload={"error": str(compliance_error)},
-                entity_type="lead",
-                entity_id=user_id,
-                agent_type="compliance"
-            )
-            # Fail-safe neutral response
-            fallback_message = (
-                "Thank you for reaching out! I'll connect you with our team who can share tailored "
-                "property options for you shortly."
-            )
-            print(f"   🛡️ Using fail-safe neutral response", flush=True)
-            return fallback_message, {
-                "passed": False,
-                "violations": ["evaluation_error"],
-                "reason": "Compliance evaluator unavailable",
-                "evaluator_version": "unknown"
+            print(f"🎯 PRD WORKFLOW: Starting lead processing for {user_id} via {channel}")
+
+            # Use provided name or fallback
+            if not user_name:
+                user_name = "Valued Customer"
+
+            print(f"👤 User: {user_name}")
+            print(f"📝 MESSAGE: '{message}' from {user_name}")
+
+            # Message data structure
+            message_data = {
+                "user_id": user_id,
+                "username": user_name,
+                "text": message,
+                "channel": channel
             }
 
-        passed = evaluation.get("passed", True)
-        safe_message = message if passed else evaluation.get("suggested_replacement") or message
-        violations = evaluation.get("violations", [])
-        reason = "Passed" if passed else " | ".join(
-            violation.get("explanation", "Policy violation") for violation in violations
-        ) or "Policy violation"
+            # Step 0: Load prior thread state and conversation state
+            confirm_key = f"confirm:{user_id}"
+            confirm_state = get_temporary_data(confirm_key) or {}
+            prior_state = get_thread_state(f"langgraph:thread:{user_id}") or {}
+            prior_lead = prior_state.get("lead", {})
+            conv_state = get_conversation_state(user_id) or {}
 
-        if not passed:
-            print(f"   ⚠️ Compliance violations detected!", flush=True)
-            print(f"   📝 Original message: '{message[:50]}...'", flush=True)
-            print(f"   ✅ Safe replacement: '{safe_message[:50]}...'", flush=True)
-            audit_log_event(
-                event_type="compliance_violation",
-                payload={
-                    "lead_id": lead_identifier,
-                    "violations": violations,
-                    "original_message": message,
-                    "replacement": safe_message
-                },
-                entity_type="lead",
-                entity_id=user_id,
-                agent_type="compliance"
-            )
-        else:
-            print(f"   ✅ Message passed compliance check", flush=True)
-
-        return safe_message, {
-            "passed": passed,
-            "violations": violations,
-            "reason": reason,
-            "evaluator_version": evaluation.get("evaluator_version")
-        }
-
-    async def _record_temporal_event(self, lead_id: str, event_type: str, event_data: Dict[str, Any]) -> None:
-        """Record lead interaction in temporal knowledge graph."""
-        print(f"🕸️ NEO4J GRAPHITI: Recording temporal event", flush=True)
-        if not self.graph_client:
-            print(f"   ⚠️ Graphiti client not initialized", flush=True)
-            return
-
-        try:
-            print(f"   📊 Event: {event_type} for lead {lead_id}", flush=True)
-            await self.graph_client.record_lead_event(
-                lead_id=lead_id,
-                event_type=event_type,
-                event_data=event_data,
+            # Step 1: Record message event in temporal knowledge graph
+            await self.graphiti_client.record_lead_event(
+                lead_id=user_id,
+                event_type="message",
+                event_data=message_data,
                 timestamp=datetime.now()
             )
-            print(f"   ✅ Temporal event recorded successfully", flush=True)
-        except Exception as graph_error:
-            print(f"   ❌ Temporal graph error: {graph_error}", flush=True)
+            print("🕒 TEMPORAL KG: Recording message event in Graphiti")
 
-    async def _query_properties_with_llm(self, extracted_info: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Test LLM function calling with database tools"""
-        print(f"🤖 LLM FUNCTION CALLING: Testing database tool access", flush=True)
-        
-        budget = extracted_info.get("budget", 0)
-        location = extracted_info.get("location", "")
-        property_type = extracted_info.get("property_type", "")
-        
-        # Check if we have sufficient criteria
-        if not budget or not location:
-            print(f"   ⚠️ Insufficient criteria for LLM function calling", flush=True)
-            print(f"   📋 Budget: {budget}, Location: {location}, Type: {property_type}", flush=True)
-            return []
-        
-        print(f"   📋 Criteria: Budget=${budget:,}, Location={location}, Type={property_type or 'any'}", flush=True)
-        
-        # Create a prompt that asks the LLM to use the database tool
-        prompt = f"""
-        You are a real estate assistant with access to a property database tool.
+            # Step 2: Extract lead information using LLM
+            print(f"🤖 LLM EXTRACTION: Using OpenRouter to extract structured info")
+            extracted_info = extract_lead_info(message)
 
-        Lead Information:
-        - Budget: ${budget:,}
-        - Location: {location}
-        - Property Type: {property_type or 'any'}
+            # Use progressive Q&A: if a current_question exists, prefer mapping this answer
+            cq = get_current_question(user_id)
+            if cq:
+                # Map answer into the specific field deterministically
+                if cq == "budget" and extracted_info.get("budget"):
+                    prior_lead["budget"] = extracted_info["budget"]
+                elif cq == "location" and extracted_info.get("location"):
+                    prior_lead["location"] = extracted_info["location"]
+                elif cq == "property_type" and extracted_info.get("property_type"):
+                    prior_lead["property_type"] = extracted_info["property_type"]
+                elif cq == "timeline" and extracted_info.get("timeline"):
+                    prior_lead["timeline"] = extracted_info["timeline"]
+                elif cq == "desired_bedrooms" and extracted_info.get("desired_bedrooms"):
+                    prior_lead["desired_bedrooms"] = extracted_info["desired_bedrooms"]
+                elif cq == "email" and extracted_info.get("email"):
+                    prior_lead["email"] = extracted_info["email"]
 
-        Your task: Use the query_properties_tool to find properties matching these criteria.
-        
-        The tool function signature is:
-        query_properties_tool(budget: int, location: str, property_type: str) -> List[Dict[str, Any]]
+                # Mark question as asked to prevent repeats
+                add_asked_question(user_id, cq)
 
-        Please call this function with the appropriate parameters and then tell me what you found.
-        """
-        
-        try:
-            # Simulate function calling by constructing the tool call manually
-            # In a real LangGraph implementation, the LLM would call the tool directly
-            print(f"   🔄 Simulating LLM function call to query_properties_tool", flush=True)
-            
-            # For testing, we'll call the tool directly but log it as if the LLM called it
-            tool_results = query_properties_tool.invoke({
-                "budget": budget,
-                "location": location,
-                "property_type": property_type or ""
-            })
-            
-            print(f"   ✅ LLM function call successful", flush=True)
-            print(f"   📊 Tool returned {len(tool_results)} properties", flush=True)
-            
-            # Simulate LLM processing the results
-            if tool_results:
-                print(f"   💬 LLM Analysis: Found {len(tool_results)} matching properties in {location}", flush=True)
-                for i, prop in enumerate(tool_results[:3]):  # Show first 3
-                    price = prop.get("price", "N/A")
-                    prop_loc = prop.get("location", "N/A")
-                    prop_type = prop.get("property_type", "N/A")
-                    print(f"      {i+1}. ${price:,} - {prop_type} in {prop_loc}", flush=True)
+                # Update asked questions in conversation state
+                if "asked_questions" not in conv_state:
+                    conv_state["asked_questions"] = []
+                if cq not in conv_state["asked_questions"]:
+                    conv_state["asked_questions"].append(cq)
+
+                # Advance qualification state
+                conv_state["answers_collected"] = int(conv_state.get("answers_collected", 0)) + 1
+
+                # Calculate current score to determine if qualification should continue
+                current_lead_data = {**prior_lead, **extracted_info}
+                scoring_result = calculate_lead_score(
+                    current_lead_data,
+                    conversation_history=prior_messages
+                )
+
+                # Determine next step based on score
+                if scoring_result['final_score'] >= 0.75:
+                    # High score - move to scheduler
+                    conv_state["current_question"] = None
+                    conv_state["qualification_complete"] = True
+                elif scoring_result['final_score'] < 0.4:
+                    # Low score - move to offramp
+                    conv_state["current_question"] = None
+                    conv_state["qualification_complete"] = True
+                elif lead_scorer.should_continue_qualification(current_lead_data, scoring_result['final_score']):
+                    # Continue qualification
+                    next_question = get_next_qualification_question(current_lead_data, conv_state.get("asked_questions", []))
+                    if next_question:
+                        set_current_question(user_id, next_question['field'])
+                        conv_state["current_question"] = next_question['field']
+                    else:
+                        conv_state["current_question"] = None
+                else:
+                    # Qualification complete
+                    conv_state["current_question"] = None
+                    conv_state["qualification_complete"] = True
+
+                update_conversation_state(user_id, conv_state)
+
+            # Update message data with extracted info
+            message_data.update(extracted_info)
+            print(f"✅ Lead info extracted: {extracted_info}")
+
+            # Step 3: Convert to lead format for database storage
+            # Merge with previously known lead data to "remember" prior answers
+            lead_data = {
+                "instagram_id": user_id,
+                "name": user_name or prior_lead.get("name"),
+                "budget": extracted_info.get("budget", prior_lead.get("budget", 0) or 0),
+                "location": extracted_info.get("location", prior_lead.get("location", "")),
+                "property_type": extracted_info.get("property_type", prior_lead.get("property_type", "")),
+                "timeline": extracted_info.get("timeline", prior_lead.get("timeline", "")),
+                "message": message,
+                "channel": "instagram"
+            }
+
+            # Step 4: Persist lead data
+            saved_lead = save_or_update_lead(user_id, lead_data)
+            lead_id = saved_lead.get("id")
+            print(f"✅ Lead updated: {lead_id} (instagram_id: {user_id})")
+
+            # Step 4.5: Sync lead to HubSpot CRM
+            if lead_data.get("email"):
+                try:
+                    hubspot_contact_id = await sync_lead_to_hubspot(lead_data)
+                    if hubspot_contact_id:
+                        print(f"✅ HubSpot sync successful: Contact {hubspot_contact_id}")
+                        # Update lead with HubSpot contact ID
+                        lead_data["hubspot_contact_id"] = hubspot_contact_id
+                        lead_data["hubspot_sync_status"] = "synced"
+                        lead_data["hubspot_last_synced_at"] = datetime.now()
+                        save_or_update_lead(user_id, {
+                            "hubspot_contact_id": hubspot_contact_id,
+                            "hubspot_sync_status": "synced",
+                            "hubspot_last_synced_at": datetime.now()
+                        })
+                    else:
+                        print("⚠️ HubSpot sync skipped - no access token configured")
+                except Exception as e:
+                    print(f"⚠️ HubSpot sync failed: {e}")
+                    # Continue processing - don't fail the entire flow
+
+            # Enhanced booking flow with comprehensive calendar integration
+            booking_manager = get_booking_manager()
+            booking_response = await booking_manager.handle_booking_flow(
+                user_id=user_id,
+                message=message,
+                user_name=user_name,
+                lead_data=lead_data,
+                confirm_state=confirm_state
+            )
+
+            # If booking flow handled the response, return it immediately
+            if booking_response.get("handled", False):
+                # Update lead data with booking information if provided
+                if booking_response.get("lead_updates"):
+                    save_or_update_lead(user_id, booking_response["lead_updates"])
+
+                # Record booking event in temporal graph
+                if booking_response.get("booking_event_type"):
+                    await self.graphiti_client.record_lead_event(
+                        lead_id=user_id,
+                        event_type=booking_response["booking_event_type"],
+                        event_data=booking_response.get("booking_event_data", {}),
+                        timestamp=datetime.now()
+                    )
+
+                # Sync booking to HubSpot as a deal
+                if booking_response.get("lead_updates", {}).get("calendar_event_id"):
+                    try:
+                        hubspot_contact_id = lead_data.get("hubspot_contact_id")
+                        if hubspot_contact_id:
+                            # Create HubSpot deal for the booking
+                            deal_result = await agent_tools.create_hubspot_deal.invoke({
+                                "contact_id": hubspot_contact_id,
+                                "deal_name": f"Consultation - {user_name}",
+                                "amount": 0,  # Free consultation
+                                "deal_stage": "appointmentscheduled"
+                            })
+                            if "error" not in deal_result:
+                                deal_id = deal_result.get('deal_id')
+                                print(f"✅ HubSpot deal created: {deal_id}")
+                                # Update lead with deal ID
+                                booking_response["lead_updates"]["hubspot_deal_id"] = deal_id
+                                save_or_update_lead(user_id, {"hubspot_deal_id": deal_id})
+                            else:
+                                print(f"⚠️ HubSpot deal creation failed: {deal_result.get('error')}")
+                        else:
+                            print("⚠️ No HubSpot contact ID available for deal creation")
+                    except Exception as e:
+                        print(f"⚠️ HubSpot deal sync failed: {e}")
+
+                return {
+                    "status": "success",
+                    "lead_id": lead_id,
+                    "response_message": booking_response["response_message"],
+                    "qualification_score": qualification_score,
+                    "next_agent": booking_response.get("next_agent", "scheduler"),
+                    "properties_found": 0,
+                    "compliance_passed": True,
+                    "booking_flow": True
+                }
+
+            # Step 5: Property search if criteria provided
+            properties = []
+            budget = lead_data.get("budget", 0) or 0
+            location = lead_data.get("location")
+            if budget > 0 and location:
+                print(f"🏠 PROPERTY SEARCH: Using LLM function calling to query database")
+                properties = query_properties_db(
+                    budget=budget,
+                    location=location,
+                    property_type=lead_data.get("property_type", "")
+                )
+                print(f"✅ Found {len(properties)} matching properties")
             else:
-                print(f"   💬 LLM Analysis: No properties found matching the criteria", flush=True)
-            
-            return tool_results
-            
+                print(f"⚠️ Insufficient criteria for property search")
+                print(f"   📋 Budget: {lead_data.get('budget', 0)}, Location: '{lead_data.get('location', '')}', Type: '{lead_data.get('property_type', '')}'")
+
+            # Step 6: Enhanced qualification scoring
+            current_lead_data = {**prior_lead, **extracted_info}
+            scoring_result = calculate_lead_score(
+                current_lead_data,
+                previous_score=prior_lead.get("qualified_score"),
+                conversation_history=prior_messages
+            )
+
+            qualification_score = scoring_result['final_score']
+            print(f"✅ QUALIFIER: Enhanced scoring complete (score: {qualification_score})")
+            print(f"   📊 Score breakdown: {scoring_result['score_breakdown']}")
+            print(f"   🎯 Qualification stage: {scoring_result['qualification_stage']}")
+
+            # Step 7: Route to next agent per enhanced workflow thresholds
+            routing = scoring_result['routing_recommendation']
+            next_agent = routing['next_agent']
+
+            print(f"🧭 ROUTER: Enhanced routing based on qualification score")
+            print(f"   📍 Next agent: {next_agent}")
+            print(f"   💭 Routing reasoning: {routing['reasoning']}")
+
+            # Step 8: Generate dynamic response
+            print(f"💬 RESPONSE GEN: Creating dynamic AI response")
+            # Build context with prior messages to improve continuity
+            prior_messages = prior_state.get("messages", [])
+            context = {
+                "user_name": user_name,
+                "extracted_info": extracted_info,
+                "properties": properties,
+                "qualification_score": qualification_score,
+                "prior_messages": prior_messages
+            }
+
+            response_message = generate_response_message(
+                lead_info=extracted_info,
+                context=str(context),
+                agent_type=next_agent
+            )
+
+            # Enhanced routing with value delivery integration
+            if next_agent == "scheduler":
+                showcase_lines = []
+                for p in (properties or [])[:3]:
+                    try:
+                        showcase_lines.append(f"• {p.get('property_type','Service')} in {p.get('location','your area')} at ${p.get('price',0):,}")
+                    except Exception:
+                        continue
+                prompt = " Ready to take the next step? I have availability this week for a 30-min consultation. Should I send you some time options?"
+                response_message = ("Based on what you shared, here are some examples that match your preferences:\n" + "\n".join(showcase_lines) + "\n\n" if showcase_lines else "") + response_message + prompt
+                store_temporary_data(confirm_key, {"awaiting_confirmation": True}, ttl=7200)
+            elif next_agent == "followup":
+                # Add value delivery options for nurturing leads
+                value_options = "\n\n💡 **How I can help you:**\n• Send you market insights for your area\n• Share educational content about buying\n• Provide property recommendations\n• Send helpful guides and resources"
+                response_message = response_message + value_options
+            elif next_agent == "offramp":
+                # Add gentle off-ramp messaging
+                offramp_note = "\n\nI understand now might not be the right time, but I'd love to keep you updated on market changes and new opportunities. Would that be helpful?"
+                response_message = response_message + offramp_note
+
+            # Step 9: Enhanced Compliance checking with UX guards
+            print(f"⚖️ COMPLIANCE: Applying fair-housing evaluation with UX guards")
+
+            # fair_housing_evaluator is async, but we're already in async context
+            compliance_result = await fair_housing_evaluator(response_message)
+
+            print(f"   📝 Message: '{response_message[:100]}...'")
+            print(f"   👤 Lead ID: {lead_id}")
+            print(f"   💰 Budget: {extracted_info.get('budget', 'not specified')}")
+            print(f"   📍 Location: {extracted_info.get('location', 'not specified')}")
+
+            if compliance_result.get("passed", False):
+                print(f"   ✅ Compliance evaluation completed")
+                print(f"   🛡️ Passed: True")
+                print(f"   ✅ Message passed compliance check")
+                print(f"   ✅ Compliance status: True")
+                final_response = response_message
+            else:
+                print(f"   🛡️ Failed compliance - using UX-friendly fallback")
+                # UX Guard: Use more engaging fallback message instead of generic one
+                final_response = "Thank you for reaching out! I'd love to help you find the perfect home. To get started, could you share a bit about your budget and preferred location?"
+
+            # Step 10: Record assistant response in temporal graph
+            await self.graphiti_client.record_lead_event(
+                lead_id=user_id,
+                event_type="assistant_response",
+                event_data={
+                    "response": final_response,
+                    "compliance_passed": compliance_result.get("passed", False)
+                },
+                timestamp=datetime.now()
+            )
+            print("🕸️ NEO4J GRAPHITI: Recording temporal event")
+            print(f"   📊 Event: assistant_response for lead {lead_id}")
+            print(f"   ✅ Temporal event recorded successfully")
+
+            # Step 11: Sync conversation to HubSpot if contact exists
+            hubspot_contact_id = lead_data.get("hubspot_contact_id")
+            if hubspot_contact_id and prior_messages:
+                try:
+                    # Prepare conversation history for HubSpot
+                    conversation_messages = prior_messages + [
+                        {"role": "user", "content": message},
+                        {"role": "assistant", "content": final_response}
+                    ]
+                    await sync_conversation_to_hubspot(hubspot_contact_id, conversation_messages)
+                    print(f"✅ Conversation synced to HubSpot contact {hubspot_contact_id}")
+                except Exception as e:
+                    print(f"⚠️ HubSpot conversation sync failed: {e}")
+
+            # Step 12: UX Guards - Prevent infinite loops and ensure conversation quality
+            # Check for conversation loop prevention
+            if prior_messages:
+                recent_assistant_messages = [msg for msg in prior_messages if msg.get("role") == "assistant"]
+                if recent_assistant_messages:
+                    last_message = recent_assistant_messages[-1]["content"]
+                    # Prevent repeating similar questions
+                    if last_message and final_response and len(last_message) > 50 and len(final_response) > 50:
+                        # Simple similarity check - avoid exact repeats
+                        if last_message.strip() == final_response.strip():
+                            print("⚠️ UX GUARD: Preventing duplicate message send")
+                            final_response = "I wanted to follow up on my previous message. " + final_response
+
+            # Step 13: Store conversation state in Redis/LangGraph
+            # Append current exchange to prior conversation history
+            messages_history = prior_messages + [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": final_response}
+            ]
+
+            state_data = {
+                "lead": {**lead_data, **scoring_result},
+                "messages": messages_history,
+                "db_results": {"properties": properties},
+                "qualification": scoring_result,
+                "next_agent": next_agent,
+                "compliance": {"passed": compliance_result.get("passed", False)},
+                "routing": routing
+            }
+
+            store_thread_state(f"langgraph:thread:{user_id}", state_data)
+            print("🔄 LANGGRAPH: Storing conversation state in Redis")
+            print(f"   🧵 Thread ID: langgraph:thread:{user_id}")
+            print(f"   📊 State components: lead, messages, db_results, qualification, next_agent, compliance")
+            print(f"   🎯 Next agent: {next_agent}")
+            print(f"   ⚖️ Compliance passed: {compliance_result.get('passed', False)}")
+            print(f"   ✅ State stored in Redis for thread: {user_id}")
+            print(f"   💾 TTL: 24 hours")
+
+            # Success result
+            return {
+                "status": "success",
+                "lead_id": lead_id,
+                "response_message": final_response,
+                "qualification_score": qualification_score,
+                "scoring_result": scoring_result,
+                "next_agent": next_agent,
+                "properties_found": len(properties),
+                "compliance_passed": compliance_result.get("passed", False),
+                "routing_recommendation": routing
+            }
+
         except Exception as e:
-            print(f"   ❌ LLM function calling failed: {e}", flush=True)
-            print(f"   🔧 Falling back to direct database call", flush=True)
-            
-            # Fallback to direct call
-            try:
-                return query_properties_db(budget, location, property_type or "")
-            except Exception as fallback_error:
-                print(f"   ❌ Fallback also failed: {fallback_error}", flush=True)
-                return []
+            error_msg = f"Lead processing error: {str(e)}"
+            print(f"❌ {error_msg}")
 
-# Global processor instance
-processor = ProductionLeadProcessor()
+            # Log error
+            audit_log_event("lead_processing_error", {
+                "user_id": user_id,
+                "message": message,
+                "error": str(e),
+                "channel": channel
+            })
 
-async def process_lead_message(user_id: str, message: str, channel: str, user_name: str = None) -> Dict[str, Any]:
-    """Main entry point for lead processing"""
+            # Return graceful error response
+            return {
+                "status": "error",
+                "error": error_msg,
+                "response_message": "I'm having trouble processing your request right now. Please try again in a few moments.",
+                "lead_id": None
+            }
+
+    async def _calculate_qualification_score(self, extracted_info: Dict[str, Any]) -> float:
+        """
+        Legacy qualification score calculation - maintained for backward compatibility.
+
+        Note: This is replaced by the enhanced scoring system in utils.lead_scoring
+        """
+        score = 0.4  # Base score for responding
+
+        # Normalize fields for safe comparisons
+        budget_val = extracted_info.get("budget")
+        try:
+            budget_num = int(budget_val) if budget_val is not None else 0
+        except Exception:
+            budget_num = 0
+
+        # Budget clarity
+        if budget_num > 0:
+            score += 0.2
+
+        # Location clarity
+        if (extracted_info.get("location") or "").strip():
+            score += 0.2
+
+        # Timeline clarity
+        if (extracted_info.get("timeline") or "").strip():
+            score += 0.1
+
+        # Property type clarity
+        if (extracted_info.get("property_type") or "").strip():
+            score += 0.1
+
+        return min(score, 1.0)
+
+    def _determine_next_agent(self, qualification_score: float, properties_found: int) -> str:
+        """Determine the next agent in the workflow"""
+        if qualification_score >= 0.7 or properties_found > 0:
+            return "followup"  # Lead is qualified, move to followup
+        elif qualification_score >= 0.5:
+            return "qualifier"  # Need more qualification
+        else:
+            return "followup"  # Default to followup for nurturing
+
+
+# Global function for direct import
+async def process_lead_message(user_id: str, message: str, channel: str = "instagram", user_name: str = None) -> Dict[str, Any]:
+    """Global function wrapper for process_lead_message"""
+    processor = ProductionLeadProcessor()
     return await processor.process_lead_message(user_id, message, channel, user_name)

@@ -83,7 +83,7 @@ async function setupTestDatabase() {
       {
         id: 'lead-2',
         user_id: 'test_user_high_score',
-        channel: 'whatsapp',
+        channel: ' ',
         message: 'Need luxury 3BHK in Miami, budget 600k',
         qualified_score: 0.95,
         budget: 600000,

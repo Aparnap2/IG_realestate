@@ -1,5 +1,5 @@
 """
-Configuration Management for Vertical Real Estate AI Platform
+Configuration Management for Instagram DM Automation Platform
 
 Centralized configuration with environment-specific settings,
 security best practices, and feature flags.

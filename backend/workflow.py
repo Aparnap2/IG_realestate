@@ -26,7 +26,7 @@ def create_workflow():
     - Three ReAct agents (Qualifier, Scheduler, FollowUp)
     - Redis checkpointer for state persistence
     - HITL interrupts for high-value leads and compliance violations
-    - Proper handoff mechanisms with routing logic
+    - Proper handoff mechani  with routing logic
     - Database query tools with caching
     - Immutable audit logging
     

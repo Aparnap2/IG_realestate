@@ -1,0 +1,81 @@
+{
+  "test_run": {
+    "start_time": "2025-10-19T19:59:27.629481",
+    "end_time": "2025-10-19T19:59:31.012711",
+    "duration_seconds": 3.38323
+  },
+  "integrations": {
+    "hubspot": {
+      "status": "ERROR",
+      "details": [
+        {
+          "timestamp": "2025-10-19T19:59:27.629500",
+          "status": "ERROR",
+          "message": "HubSpot test setup error: 'Config' object has no attribute 'HUBSPOT_ACCESS_TOKEN'"
+        }
+      ]
+    },
+    "google_calendar": {
+      "status": "WORKING",
+      "details": [
+        {
+          "timestamp": "2025-10-19T19:59:28.844798",
+          "status": "SUCCESS",
+          "message": "Using mock calendar implementation (expected in test environment)"
+        },
+        {
+          "timestamp": "2025-10-19T19:59:29.092689",
+          "status": "SUCCESS",
+          "message": "Retrieved 6 available slots"
+        },
+        {
+          "timestamp": "2025-10-19T19:59:29.092724",
+          "status": "SUCCESS",
+          "message": "Created test event: mock_event_1761107369"
+        }
+      ]
+    },
+    "redis": {
+      "status": "ERROR",
+      "details": [
+        {
+          "timestamp": "2025-10-19T19:59:29.093060",
+          "status": "ERROR",
+          "message": "Redis connection failed"
+        }
+      ]
+    },
+    "temporal_graph": {
+      "status": "WORKING",
+      "details": [
+        {
+          "timestamp": "2025-10-19T19:59:29.348227",
+          "status": "SUCCESS",
+          "message": "Using Supabase fallback for temporal storage (expected in test environment)"
+        },
+        {
+          "timestamp": "2025-10-19T19:59:30.071965",
+          "status": "SUCCESS",
+          "message": "Recorded test event for lead: test_lead_1760884169"
+        },
+        {
+          "timestamp": "2025-10-19T19:59:30.564199",
+          "status": "SUCCESS",
+          "message": "Retrieved lead history: 0 events"
+        },
+        {
+          "timestamp": "2025-10-19T19:59:31.012693",
+          "status": "SUCCESS",
+          "message": "Engagement trajectory: stable"
+        }
+      ]
+    }
+  },
+  "summary": {
+    "total_integrations": 4,
+    "working": 2,
+    "partial": 0,
+    "error": 2,
+    "not_tested": 0
+  }
+}

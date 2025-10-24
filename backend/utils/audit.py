@@ -177,25 +177,30 @@ def audit_log_event(
         return "audit_failed"
 
 def _store_audit_event(event: AuditEvent) -> None:
-    """Store audit event in Supabase with retry logic."""
-    max_retries = 3
+    """Store audit event in Supabase with retry logic; gracefully fallback if table missing."""
     client = _get_supabase_client()
-    
+
+    # Pre-check: verify audit_logs table exists and is accessible
+    try:
+        _ = client.table("audit_logs").select("id").limit(1).execute()
+    except Exception as e:
+        # Table missing or inaccessible; write to fallback and return without raising
+        _log_to_fallback_storage(event, f"audit_logs table missing or inaccessible: {e}")
+        return
+
+    max_retries = 3
     for attempt in range(max_retries):
         try:
             response = client.table("audit_logs").insert(event.to_dict()).execute()
-            
             if response.data:
                 return  # Success
             else:
                 raise Exception("No data returned from insert")
-                
         except Exception as e:
             if attempt == max_retries - 1:
-                # Final attempt failed - log to fallback
+                # Final attempt failed - log to fallback and return
                 _log_to_fallback_storage(event, str(e))
-                raise
-            
+                return
             # Wait before retry (exponential backoff)
             import time
             time.sleep(2 ** attempt)

@@ -6,7 +6,7 @@ Implements PRD Section 2.6: Compliance-by-Design with policy gates and audit tra
 Key Features:
 - Fair Housing Act violation detection with pattern matching + LLM
 - GDPR/CCPA data minimization and consent tracking
-- TCPA opt-in verification for SMS communications
+- TCPA opt-in verification for   communications
 - Immutable audit logging of all compliance decisions
 - Suggested neutral alternatives for blocked content
 """
@@ -378,13 +378,13 @@ def _update_lead_consent_status(lead_id: str, event: str, metadata: Dict[str, An
             "error": str(e)
         })
 
-def validate_tcpa_compliance(lead_id: str, message_type: str = "sms") -> bool:
+def validate_tcpa_compliance(lead_id: str, message_type: str = " ") -> bool:
     """
-    Validate TCPA compliance before sending SMS/calls.
+    Validate TCPA compliance before sending  /calls.
     
     Args:
         lead_id: Lead identifier
-        message_type: Type of communication (sms, call, email)
+        message_type: Type of communication ( , call, email)
         
     Returns:
         True if communication is TCPA compliant
@@ -400,8 +400,8 @@ def validate_tcpa_compliance(lead_id: str, message_type: str = "sms") -> bool:
         
         lead_data = response.data[0]
         
-        # TCPA requires explicit opt-in for SMS/calls
-        if message_type in ["sms", "call"] and not lead_data.get("tcpa_opt_in"):
+        # TCPA requires explicit opt-in for  /calls
+        if message_type in [" ", "call"] and not lead_data.get("tcpa_opt_in"):
             return False
         
         # Check if consent is recent (within 18 months for TCPA)

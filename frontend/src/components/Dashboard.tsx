@@ -94,6 +94,20 @@ export default function Dashboard({ company, onCompanyChange }: DashboardProps) 
             <div className="flex items-center space-x-3">
               <Button
                 variant="outline"
+                onClick={() => navigate('/admin/lead-magnets')}
+                className="text-sm"
+              >
+                Lead Magnets
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => navigate('/admin/conversations')}
+                className="text-sm"
+              >
+                Conversations
+              </Button>
+              <Button
+                variant="outline"
                 onClick={onCompanyChange}
                 className="text-sm"
               >

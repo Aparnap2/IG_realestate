@@ -223,7 +223,7 @@ TCPA_PATTERNS = [
 ]
 
 def check_tcpa_compliance(message: str, has_consent: bool = False) -> Dict[str, Any]:
-    """Check TCPA compliance for SMS communications
+    """Check TCPA compliance for   communications
     
     Args:
         message: Message to evaluate

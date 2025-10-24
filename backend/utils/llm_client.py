@@ -45,7 +45,7 @@ async def get_gemini_response(prompt: str, max_tokens: int = 1000, temperature: 
     
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-2.5-flash')
         
         print(f"🔥 Calling Gemini Pro as fallback")
         
@@ -66,25 +66,40 @@ async def get_llm_response(
     prompt: str,
     model: str = DEFAULT_OPENROUTER_MODEL,
     max_tokens: int = 1000,
-    temperature: float = 0.7
+    temperature: float = 0.7,
+    response_format: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
-    Get response from OpenRouter LLM with Gemini fallback.
-    
+    Get response from OpenRouter LLM with Gemini fallback and robust error handling.
+
     Args:
         prompt: The prompt to send to the LLM
         model: Model to use (default: meta-llama/llama-3.2-3b-instruct:free)
         max_tokens: Maximum tokens in response
         temperature: Temperature for response generation
-        
+        response_format: Optional OpenRouter response_format, e.g. {"type": "json_object"} for JSON mode
+
+    Returns:
+        LLM response text or fallback message
+    """
+    """
+    Get response from OpenRouter LLM with Gemini fallback.
+
+    Args:
+        prompt: The prompt to send to the LLM
+        model: Model to use (default: meta-llama/llama-3.2-3b-instruct:free)
+        max_tokens: Maximum tokens in response
+        temperature: Temperature for response generation
+        response_format: Optional OpenRouter response_format, e.g. {"type": "json_object"} for JSON mode
+
     Returns:
         LLM response text
     """
     # Try OpenRouter first
     api_key = os.getenv("OPENROUTER_API_KEY")
     if api_key:
-        print(f"🤖 Calling OpenRouter with model: {model}")
-        
+        print(f"🤖 Calling OpenRouter with model: {model}{' [JSON mode]' if response_format else ''}")
+
         try:
             async with aiohttp.ClientSession() as session:
                 headers = {
@@ -93,8 +108,8 @@ async def get_llm_response(
                     "HTTP-Referer": "https://aaa-real-estate.com",
                     "X-Title": "AAA Real Estate Lead Capture System"
                 }
-                
-                payload = {
+
+                payload: Dict[str, Any] = {
                     "model": model,
                     "messages": [
                         {"role": "user", "content": prompt}
@@ -102,7 +117,9 @@ async def get_llm_response(
                     "max_tokens": max_tokens,
                     "temperature": temperature
                 }
-                
+                if response_format:
+                    payload["response_format"] = response_format
+
                 async with session.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers=headers,
@@ -118,18 +135,18 @@ async def get_llm_response(
                         if response.status == 429:
                             print(f"💡 Rate limit reached. Trying Gemini fallback...")
                         # Fall through to Gemini
-                        
+
         except Exception as e:
             print(f"❌ Error getting OpenRouter response: {e}")
             print(f"💡 Trying Gemini fallback...")
     else:
         print("⚠️ OpenRouter API key not configured, trying Gemini...")
-    
+
     # Try Gemini as fallback
     gemini_response = await get_gemini_response(prompt, max_tokens, temperature)
     if gemini_response:
         return gemini_response
-    
+
     # If both fail, return fallback message
     return "I apologize, but I'm having trouble processing your request right now. Please try again later."
 
@@ -164,7 +181,8 @@ def get_llm_response_sync(
     prompt: str,
     model: str = DEFAULT_OPENROUTER_MODEL,
     max_tokens: int = 1000,
-    temperature: float = 0.7
+    temperature: float = 0.7,
+    response_format: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Blocking wrapper around get_llm_response for sync contexts."""
     return _run_coro_sync(
@@ -172,7 +190,8 @@ def get_llm_response_sync(
         prompt=prompt,
         model=model,
         max_tokens=max_tokens,
-        temperature=temperature
+        temperature=temperature,
+        response_format=response_format,
     )
 
 def get_structured_llm_response(
@@ -192,34 +211,64 @@ def get_structured_llm_response(
         Structured response dictionary
     """
     try:
-        # Add format instructions to prompt
-        format_prompt = f"{prompt}\n\nPlease respond in the following JSON format:\n{response_format}"
+        # Add format instructions to prompt (belt-and-suspenders with JSON mode)
+        format_prompt = f"{prompt}\n\nPlease respond strictly as a JSON object matching:\n{response_format}"
 
-        response = _run_coro_sync(get_llm_response, format_prompt, model=model)
-        
-        # Try to parse as JSON
+        response = _run_coro_sync(
+            get_llm_response,
+            format_prompt,
+            model=model,
+            response_format={"type": "json_object"},
+        )
+
+        # Try to parse as JSON with robust error handling
         import json
         import re
         try:
             # Strip markdown code blocks if present
             cleaned = re.sub(r'^```json\s*|\s*```$', '', response.strip(), flags=re.MULTILINE)
             cleaned = re.sub(r'^```\s*|\s*```$', '', cleaned.strip(), flags=re.MULTILINE)
-            
+
             # Handle case where LLM returns explanatory text before JSON
             if '{' in cleaned and '}' in cleaned:
                 # Extract JSON from the response
                 start_idx = cleaned.find('{')
                 end_idx = cleaned.rfind('}') + 1
                 json_str = cleaned[start_idx:end_idx]
+
+                # Basic JSON repair: fix common issues
+                json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas in arrays
+
                 return json.loads(json_str)
             else:
+                # Try to repair malformed JSON
+                cleaned = re.sub(r',\s*}', '}', cleaned)  # Remove trailing commas
+                cleaned = re.sub(r',\s*]', ']', cleaned)  # Remove trailing commas in arrays
                 return json.loads(cleaned)
         except json.JSONDecodeError as e:
-            # Return default structure if parsing fails
-            print(f"⚠️ JSON parsing failed: {e}")
-            print(f"   Response was: {response[:200]}...")
-            return {"error": "Failed to parse structured response", "raw_response": response}
-            
+            # Attempt to repair common JSON issues
+            try:
+                print(f"⚠️ JSON parsing failed, attempting repair: {e}")
+                print(f"   Response was: {response[:500]}...")
+
+                # Try to extract JSON-like content and repair
+                json_match = re.search(r'\{.*\}', response, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                    # Fix common issues
+                    json_str = re.sub(r',\s*}', '}', json_str)
+                    json_str = re.sub(r',\s*]', ']', json_str)
+                    json_str = re.sub(r'":\s*"([^"]*)"([^,}]*),', r'": "\1\2",', json_str)  # Fix string concatenation
+                    return json.loads(json_str)
+                else:
+                    # Return fallback with default values
+                    print(f"❌ Could not extract JSON from response")
+                    return {"error": "Failed to parse structured response", "raw_response": response[:200]}
+            except Exception as repair_e:
+                print(f"❌ JSON repair also failed: {repair_e}")
+                return {"error": "Failed to parse structured response", "raw_response": response[:200]}
+
     except Exception as e:
         print(f"❌ Error getting structured LLM response: {e}")
         return {"error": str(e)}

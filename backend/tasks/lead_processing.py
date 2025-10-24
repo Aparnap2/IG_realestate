@@ -326,5 +326,62 @@ celery_app.conf.beat_schedule = {
     },
 }
 
+async def process_lead_message(user_id: str, message: str, channel: str = "instagram", user_name: str = None) -> Dict[str, Any]:
+    """
+    Process incoming lead message through the PRD workflow.
+    
+    Args:
+        user_id: Instagram user ID
+        message: Message content
+        channel: Channel source (instagram,  , etc.)
+        user_name: Extracted user name for personalization
+        
+    Returns:
+        Processing result with potential response message
+    """
+    try:
+        print(f"🎯 PRD WORKFLOW: Starting lead processing for {user_id} via {channel}")
+        
+        # Extract user profile information
+        if not user_name:
+            from agents.prd_compliant_workflow import extract_user_profile
+            user_name = extract_user_profile(user_id)
+        
+        print(f"👤 User profile: {user_name}")
+        print(f"📝 MESSAGE: '{message}' from {user_name}")
+        
+        # Create message data for processing
+        message_data = {
+            "sender_id": user_id,
+            "username": user_name,
+            "text": message,
+            "channel": channel,
+            "timestamp": str(__import__('datetime').datetime.now())
+        }
+        
+        # Initialize or get the workflow state
+        from agents.prd_compliant_workflow import run_prd_workflow
+        
+        # Execute the PRD compliant workflow
+        result = await run_prd_workflow(message_data)
+        
+        print(f"✅ Workflow completed: {result.get('status', 'unknown')}")
+        
+        if result.get("status") == "success":
+            print(f"💬 RESPONSE: {result.get('response_message', 'No response generated')[:100]}...")
+        
+        return result
+        
+    except Exception as e:
+        error_msg = f"Lead processing error: {str(e)}"
+        print(f"❌ {error_msg}")
+        
+        # Return error result that won't break the response flow
+        return {
+            "status": "error",
+            "error": error_msg,
+            "response_message": "I'm having trouble processing your request right now. Please try again later."
+        }
+
 if __name__ == "__main__":
     celery_app.start()

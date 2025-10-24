@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from config import get_settings
 from utils.audit import audit_log_event
+from utils.supabase_client import supabase, _ensure_supabase
 
 settings = get_settings()
 
@@ -331,14 +332,23 @@ class GraphitiClient:
     ):
         """Store event in Supabase as fallback."""
         try:
-            from utils.supabase_client import supabase
+            # Get supabase client with proper initialization
+            try:
+                client = _ensure_supabase()
+            except Exception as e:
+                print(f"⚠️ Lead events fallback failed: Could not initialize Supabase client - {e}")
+                return
+                
+            if not client:
+                print("⚠️ Lead events fallback failed: Supabase client not initialized")
+                return
             
             # Convert lead_id to UUID if needed by querying leads table
             # Try instagram_id first (primary identifier), then fallback to user_id
-            lead_uuid_response = supabase.table("leads").select("id").eq("instagram_id", lead_id).execute()
+            lead_uuid_response = client.table("leads").select("id").eq("instagram_id", lead_id).execute()
             if not lead_uuid_response.data:
                 # Fallback to user_id if instagram_id doesn't match
-                lead_uuid_response = supabase.table("leads").select("id").eq("user_id", lead_id).execute()
+                lead_uuid_response = client.table("leads").select("id").eq("user_id", lead_id).execute()
             lead_uuid = None
             if lead_uuid_response.data:
                 lead_uuid = lead_uuid_response.data[0]["id"]
@@ -355,7 +365,7 @@ class GraphitiClient:
             }
             
             # Insert into lead_events table with proper schema
-            supabase.table("lead_events").insert(event_record).execute()
+            client.table("lead_events").insert(event_record).execute()
             
         except Exception as e:
             # Silently fail if lead_events table doesn't exist or schema mismatch
@@ -409,23 +419,31 @@ class GraphitiClient:
     ) -> List[Dict[str, Any]]:
         """Query history from Supabase fallback."""
         try:
-            from utils.supabase_client import supabase
+            # Get supabase client with proper initialization
+            try:
+                client = _ensure_supabase()
+            except Exception as e:
+                print(f"⚠️ Lead events history query failed: Could not initialize Supabase client - {e}")
+                return []
+                
+            if not client:
+                return []
             
             cutoff_time = datetime.now() - timedelta(days=days_back)
             
             # Convert lead_id to UUID if needed by querying leads table
             # Try instagram_id first (primary identifier), then fallback to user_id
-            lead_uuid_response = supabase.table("leads").select("id").eq("instagram_id", lead_id).execute()
+            lead_uuid_response = client.table("leads").select("id").eq("instagram_id", lead_id).execute()
             if not lead_uuid_response.data:
                 # Fallback to user_id if instagram_id doesn't match
-                lead_uuid_response = supabase.table("leads").select("id").eq("user_id", lead_id).execute()
+                lead_uuid_response = client.table("leads").select("id").eq("user_id", lead_id).execute()
             
             if not lead_uuid_response.data:
                 return []
             
             lead_uuid = lead_uuid_response.data[0]["id"]
             
-            query = supabase.table("lead_events")\
+            query = client.table("lead_events")\
                 .select("*")\
                 .eq("lead_id", lead_uuid)\
                 .gte("created_at", cutoff_time.isoformat())\

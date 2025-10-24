@@ -30,27 +30,19 @@ def event_loop():
 @pytest.fixture
 def mock_settings():
     """Mock settings for testing."""
-    from config import Settings
+    from config import Config
     
-    settings = Settings(
-        ENVIRONMENT="testing",
-        DEBUG=True,
-        SUPABASE_URL="http://localhost:54321",
-        SUPABASE_KEY="test_key",
-        REDIS_URL="redis://localhost:6380",
-        OPENROUTER_API_KEY="test_key",
-        INSTAGRAM_PAGE_ACCESS_TOKEN="test_token",
-        INSTAGRAM_VERIFY_TOKEN="test_verify",
-        INSTAGRAM_APP_SECRET="test_secret",
-        SECRET_KEY="test_secret_key",
-        AUDIT_SALT="test_audit_salt",
-        ENABLE_ROUTER_AGENT=True,
-        ENABLE_COMPLIANCE_CHECKS=True,
-        ENABLE_AUDIT_LOGGING=True,
-        ENABLE_REAL_INSTAGRAM_API=False,
-        ENABLE_TEMPORAL_GRAPH=False,
-        ENABLE_GOOGLE_CALENDAR=False
-    )
+    settings = Config()
+    # Override with test values
+    settings.ENVIRONMENT = "testing"
+    settings.DEBUG = True
+    settings.SUPABASE_URL = "http://localhost:54321"
+    settings.SUPABASE_KEY = "test_key"
+    settings.REDIS_URL = "redis://localhost:6380"
+    settings.OPENROUTER_API_KEY = "test_key"
+    settings.META_PAGE_ACCESS_TOKEN = "test_token"
+    settings.META_ACCESS_TOKEN = "test_verify"
+    settings.META_APP_SECRET = "test_secret"
     
     with patch('config.get_settings', return_value=settings):
         yield settings

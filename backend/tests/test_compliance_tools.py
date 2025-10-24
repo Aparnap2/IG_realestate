@@ -250,7 +250,7 @@ class TestGDPRTCPACompliance:
             }]
         )
         
-        result = validate_tcpa_compliance("test_lead", "sms")
+        result = validate_tcpa_compliance("test_lead", " ")
         assert result == True
         
         # Mock lead without consent
@@ -261,7 +261,7 @@ class TestGDPRTCPACompliance:
             }]
         )
         
-        result = validate_tcpa_compliance("test_lead", "sms")
+        result = validate_tcpa_compliance("test_lead", " ")
         assert result == False
     
     def test_gdpr_data_minimization(self):

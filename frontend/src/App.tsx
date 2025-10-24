@@ -4,6 +4,8 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Dashboard from './components/Dashboard'
 import Login from './components/Login'
 import CompanySelector from './components/CompanySelector'
+import AdminLeadMagnets from './pages/AdminLeadMagnets'
+import AdminConversations from './pages/AdminConversations'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import { Company } from './lib/supabase'
 
@@ -105,6 +107,26 @@ function AppContent() {
               />
             ) : (
               <div>Loading company data...</div>
+            )
+          }
+        />
+        <Route
+          path="/admin/lead-magnets"
+          element={
+            selectedCompany ? (
+              <AdminLeadMagnets company={selectedCompany} />
+            ) : (
+              <Navigate to="/" replace />
+            )
+          }
+        />
+        <Route
+          path="/admin/conversations"
+          element={
+            selectedCompany ? (
+              <AdminConversations company={selectedCompany} />
+            ) : (
+              <Navigate to="/" replace />
             )
           }
         />
