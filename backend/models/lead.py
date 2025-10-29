@@ -64,6 +64,19 @@ class Lead(BaseModel):
     booking_confirmed_at: Optional[datetime] = Field(None, description="Timestamp when meeting was booked and confirmed")
     rescheduled_count: Optional[int] = Field(0, description="Number of times this meeting has been rescheduled")
 
+    # Self-Driving Booking Ops 2.0 fields
+    booking_idempotency_key: Optional[str] = Field(None, description="KSUID for idempotent booking operations")
+    booking_etag: Optional[str] = Field(None, description="ETag from last calendar operation")
+    booking_attempt_count: Optional[int] = Field(0, description="Number of booking attempts")
+    booking_state: Optional[str] = Field(None, description="Current booking state machine state")
+    reminder_24h_sent: Optional[bool] = Field(False, description="24-hour reminder sent")
+    reminder_3h_sent: Optional[bool] = Field(False, description="3-hour reminder sent")
+    reminder_30m_sent: Optional[bool] = Field(False, description="30-minute reminder sent")
+    reminder_confirmed_at: Optional[datetime] = Field(None, description="Timestamp of reminder confirmation")
+    no_show_predicted: Optional[bool] = Field(False, description="No-show prediction flag")
+    waitlist_added_at: Optional[datetime] = Field(None, description="Timestamp when added to waitlist")
+    parent_booking_key: Optional[str] = Field(None, description="Parent booking key for reschedule lineage")
+
     # HubSpot CRM integration fields
     hubspot_contact_id: Optional[str] = Field(None, description="HubSpot contact ID for CRM synchronization")
     hubspot_deal_id: Optional[str] = Field(None, description="HubSpot deal ID for booked meetings")
@@ -93,3 +106,12 @@ class Lead(BaseModel):
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for database storage"""
         return self.model_dump()
+
+    def generate_idempotency_key(self) -> str:
+        """Generate a KSUID-based unique key for idempotent operations"""
+        # Using UUID4 as approximation - replace with proper KSUID library if needed
+        return str(uuid.uuid4())
+
+    def is_booking_confirmed(self) -> bool:
+        """Check if booking has been confirmed via reminder system"""
+        return self.reminder_confirmed_at is not None

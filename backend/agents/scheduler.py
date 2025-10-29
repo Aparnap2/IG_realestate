@@ -13,6 +13,13 @@ from typing import Dict, Any, List
 import os
 import math
 
+# Self-Driving Booking Ops 2.0 imports
+from booking.booking_state_machine import BookingStateMachine
+from booking.slot_cache_manager import SlotCacheManager
+from booking.idempotent_calendar_writer import IdempotentCalendarWriter
+from booking.reminder_scheduler import ReminderScheduler
+from booking.scheduling_policies import SchedulingPolicies
+
 # Optional geopy import for geographic calculations
 try:
     from geopy.distance import geodesic
@@ -33,76 +40,199 @@ from hubspot.crm.deals import SimplePublicObjectInput as DealObjectInput
 
 def scheduler_node(state: AgentState) -> Dict[str, Any]:
     """
-    Scheduler agent node that books meetings with qualified leads.
-    
+    Scheduler agent node integrated with Self-Driving Booking Ops 2.0.
+
+    Uses booking state machine for deterministic orchestration with idempotent writes,
+    slot caching, and automated reminder scheduling.
+
     Args:
         state: Current agent state
-        
+
     Returns:
         Updated state with meeting details and next agent
     """
     lead = state["lead"].model_copy(deep=True)
-    
+
     # Check if this is an interrupt for HITL review
     if state.get("interrupt"):
         # If interrupted, we should wait for human approval before proceeding
         # The workflow will be paused here until /human/approve is called
         return {"lead": lead, "next_agent": "scheduler"}
-    
-    # Get available time slots using Google Calendar API
-    available_slots = get_available_slots_from_google_calendar()
-    
-    if available_slots:
-        # Select the first available slot
-        selected_slot = available_slots[0]
-        lead.meeting_slot = selected_slot
-        
-        timestamp = datetime.now().isoformat()
-        # Add scheduling intent to the lead's history
-        lead.history.append({
-            "message": f"Scheduling meeting for {selected_slot}",
-            "timestamp": timestamp,
-            "agent": "scheduler"
-        })
-        
-        # Book the event in Google Calendar
-        event_id = book_calendar_event(lead, selected_slot)
 
-        lead.history.append({
-            "message": f"Calendar booking {'confirmed' if event_id else 'pending'} (event_id={event_id or 'N/A'})",
-            "timestamp": datetime.now().isoformat(),
-            "agent": "scheduler"
-        })
+    # Initialize booking components
+    booking_sm = BookingStateMachine()
+    slot_cache = SlotCacheManager()
+    calendar_writer = IdempotentCalendarWriter()
+    reminder_scheduler = ReminderScheduler()
+    scheduling_policies = SchedulingPolicies()
 
-        # Trigger HubSpot logging and record the action regardless of mock side effects
+    # Get current booking state
+    current_booking_state = booking_sm.get_state(lead.id)
+    current_state = current_booking_state.get('current_state', 'INTAKE') if current_booking_state else 'INTAKE'
+
+    try:
+        if current_state == 'PROPOSE_SLOT':
+            # Get cached slots with buffer policy
+            policy = scheduling_policies.get_policy_for_service('consultation')
+            cached_slots = slot_cache.get_cached_slots(
+                location=lead.location or 'default',
+                service='consultation',
+                duration=policy.default_duration_minutes,
+                buffers={
+                    'min_gap': policy.min_gap_minutes,
+                    'travel_buffer': 0  # No travel for virtual consultations
+                }
+            )
+
+            if not cached_slots:
+                # Cache miss - fetch fresh slots
+                # This would integrate with calendar API to get fresh slots
+                # For now, use existing logic as fallback
+                available_slots = get_available_slots_from_google_calendar()
+                if available_slots:
+                    # Cache the fresh slots
+                    slot_cache.cache_slots(
+                        location=lead.location or 'default',
+                        service='consultation',
+                        duration=60,
+                        buffers={'min_gap': 30},
+                        slots=available_slots
+                    )
+                    cached_slots = available_slots
+
+            if cached_slots:
+                # Transition to propose slots
+                booking_sm.transition(lead.id, current_state, 'slots_proposed', {
+                    'slot_candidates': cached_slots
+                })
+
+                # Return slots to user for selection
+                return {
+                    "lead": lead,
+                    "available_slots": cached_slots,
+                    "next_agent": "scheduler"  # Stay in scheduler for slot selection
+                }
+            else:
+                # No slots available
+                lead.history.append({
+                    "message": "No available time slots found",
+                    "timestamp": datetime.now().isoformat(),
+                    "agent": "scheduler"
+                })
+                save_lead(lead.model_dump())
+                return {"lead": lead, "next_agent": "end"}
+
+        elif current_state == 'CONFIRM':
+            # User has selected a slot, attempt to book
+            selected_slot = getattr(lead, 'selected_slot', None) or lead.meeting_slot
+
+            if not selected_slot:
+                # No slot selected, go back to proposing
+                booking_sm.transition(lead.id, current_state, 'slots_proposed', {})
+                return {"lead": lead, "next_agent": "scheduler"}
+
+            # Generate idempotency key
+            idempotency_key = lead.generate_idempotency_key()
+
+            # Prepare event payload
+            event_payload = {
+                'start_time': selected_slot,
+                'end_time': selected_slot + timedelta(minutes=60),
+                'summary': f'Real Estate Consultation with {lead.name or "Unknown"}',
+                'description': f'Real estate consultation for {lead.property_type or "property"} in {lead.location or "area"}',
+                'attendee_emails': [lead.email] if lead.email else [],
+                'location': 'Online Meeting'
+            }
+
+            # Attempt idempotent write
+            write_result = calendar_writer.write_event(
+                lead_id=lead.id,
+                slot_time=selected_slot,
+                event_payload=event_payload,
+                idempotency_key=idempotency_key
+            )
+
+            if write_result['status'] == 'success':
+                # Successful booking
+                lead.meeting_slot = selected_slot
+                lead.calendar_event_id = write_result.get('event_id')
+                lead.meeting_link = write_result.get('meet_link')
+                lead.booking_idempotency_key = idempotency_key
+                lead.booking_etag = write_result.get('etag')
+
+                # Transition to reminders
+                booking_sm.transition(lead.id, current_state, 'write_success', {})
+
+                # Schedule reminders
+                reminder_scheduler.schedule_reminders(
+                    event_id=write_result['event_id'],
+                    lead_id=lead.id,
+                    slot_time=selected_slot
+                )
+
+                lead.history.append({
+                    "message": f"Calendar booking confirmed (event_id={write_result['event_id']})",
+                    "timestamp": datetime.now().isoformat(),
+                    "agent": "scheduler"
+                })
+
+                # HubSpot sync
+                try:
+                    log_to_hubspot(lead)
+                    lead.history.append({
+                        "message": "HubSpot sync completed for booked lead",
+                        "timestamp": datetime.now().isoformat(),
+                        "agent": "scheduler"
+                    })
+                except Exception as hubspot_error:
+                    lead.history.append({
+                        "message": f"HubSpot sync failed: {hubspot_error}",
+                        "timestamp": datetime.now().isoformat(),
+                        "agent": "scheduler"
+                    })
+
+                save_lead(lead.model_dump())
+                return {"lead": lead, "next_agent": "followup"}
+
+            elif write_result['status'] == 'conflict':
+                # Handle conflict - replan
+                booking_sm.transition(lead.id, current_state, 'conflict_detected', {})
+
+                # Invalidate cache and get alternative slots
+                slot_cache.invalidate_cache('primary')  # Assuming primary calendar
+
+                lead.history.append({
+                    "message": f"Slot conflict detected, replanning (key={idempotency_key})",
+                    "timestamp": datetime.now().isoformat(),
+                    "agent": "scheduler"
+                })
+
+                # Go back to proposing alternative slots
+                return {"lead": lead, "next_agent": "scheduler"}
+
+            else:
+                # Other write error
+                lead.history.append({
+                    "message": f"Calendar booking failed: {write_result.get('message', 'Unknown error')}",
+                    "timestamp": datetime.now().isoformat(),
+                    "agent": "scheduler"
+                })
+                save_lead(lead.model_dump())
+                return {"lead": lead, "next_agent": "end"}
+
+        else:
+            # Initialize booking flow if not already started
+            if not current_booking_state:
+                booking_sm.set_state(lead.id, 'QUALIFY', {})
+
+            # For other states, transition to proposing slots
+            booking_sm.transition(lead.id, current_state, 'qualify_complete', {})
+
+            return {"lead": lead, "next_agent": "scheduler"}
+
+    except Exception as e:
         lead.history.append({
-            "message": "HubSpot sync initiated for scheduled lead",
-            "timestamp": datetime.now().isoformat(),
-            "agent": "scheduler"
-        })
-        try:
-            log_to_hubspot(lead)
-        except Exception as hubspot_error:
-            lead.history.append({
-                "message": f"HubSpot sync failed: {hubspot_error}",
-                "timestamp": datetime.now().isoformat(),
-                "agent": "scheduler"
-            })
-        
-        # Save updated lead information
-        save_lead(lead.model_dump())
-        
-        # Move to followup after scheduling
-        return {"lead": lead, "next_agent": "followup"}
-    else:
-        # If no slots available, end the conversation
-        lead.history.append({
-            "message": "No available time slots found",
-            "timestamp": datetime.now().isoformat(),
-            "agent": "scheduler"
-        })
-        lead.history.append({
-            "message": "Lead routed to end state due to scheduling unavailability",
+            "message": f"Scheduler error: {str(e)}",
             "timestamp": datetime.now().isoformat(),
             "agent": "scheduler"
         })
@@ -234,54 +364,7 @@ def get_available_slots() -> list:
     
     return slots
 
-def book_calendar_event(lead, slot) -> str:
-    """
-    Book an event in Google Calendar.
-    
-    Args:
-        lead: Lead information
-        slot: Datetime slot for the meeting
-        
-    Returns:
-        Event ID if successful, empty string otherwise
-    """
-    try:
-        service = get_google_calendar_service()
-        
-        # Create event
-        event = {
-            'summary': f'Real Estate Consultation with {lead.name or "Unknown"}',
-            'location': 'Online Meeting',
-            'description': f'Real estate consultation for {lead.property_type} in {lead.location}',
-            'start': {
-                'dateTime': slot.isoformat(),
-                'timeZone': os.getenv("USER_TIMEZONE", "UTC"),
-            },
-            'end': {
-                'dateTime': (slot + timedelta(hours=1)).isoformat(),
-                'timeZone': os.getenv("USER_TIMEZONE", "UTC"),
-            },
-            'attendees': [
-                {'email': os.getenv("AGENT_EMAIL")},
-                {'email': lead.email} if lead.email else {'email': 'unknown@example.com'}
-            ],
-            'reminders': {
-                'useDefault': False,
-                'overrides': [
-                    {'method': 'email', 'minutes': 24 * 60},
-                    {'method': 'popup', 'minutes': 10},
-                ],
-            },
-        }
-        
-        event = service.events().insert(calendarId='primary', body=event).execute()
-        event_id = event.get('id')
-        
-        print(f"Event created: {event.get('htmlLink')}")
-        return event_id
-    except Exception as e:
-        print(f"Error booking calendar event: {e}")
-        return ""
+
 
 def get_hubspot_client():
     """

@@ -270,6 +270,96 @@ CREATE INDEX IF NOT EXISTS idx_lead_events_lead_id ON lead_events(lead_id);
 CREATE INDEX IF NOT EXISTS idx_lead_events_event_type ON lead_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_lead_events_created_at ON lead_events(created_at);
 
+-- Self-Driving Booking Ops 2.0 Tables
+
+-- Create booking_attempts table for idempotent calendar writes
+CREATE TABLE IF NOT EXISTS booking_attempts (
+    id TEXT PRIMARY KEY,  -- KSUID-based unique key
+    lead_id UUID REFERENCES leads(id),
+    slot_time TIMESTAMPTZ NOT NULL,
+    request_payload JSONB,
+    response_etag TEXT,
+    calendar_event_id TEXT,
+    status TEXT CHECK (status IN ('pending', 'confirmed', 'conflict', 'failed')),
+    parent_key TEXT,  -- For reschedule lineage
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create waitlist table for backfill candidates
+CREATE TABLE IF NOT EXISTS waitlist (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    lead_id UUID REFERENCES leads(id),
+    service TEXT NOT NULL,
+    location TEXT NOT NULL,
+    fit_score FLOAT CHECK (fit_score >= 0 AND fit_score <= 1),
+    responsiveness_score FLOAT CHECK (responsiveness_score >= 0 AND responsiveness_score <= 1),
+    backfill_attempts INT DEFAULT 0,
+    last_contacted_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create waitlist_attempts table for backfill tracking
+CREATE TABLE IF NOT EXISTS waitlist_attempts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    waitlist_id UUID REFERENCES waitlist(id),
+    slot_time TIMESTAMPTZ NOT NULL,
+    idempotency_key TEXT,
+    status TEXT CHECK (status IN ('offered', 'accepted', 'declined', 'timeout', 'failed')),
+    attempted_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create booking_metrics table for observability
+CREATE TABLE IF NOT EXISTS booking_metrics (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    metric_type TEXT NOT NULL,
+    value FLOAT NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    recorded_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create booking_conflicts table for conflict tracking
+CREATE TABLE IF NOT EXISTS booking_conflicts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    lead_id UUID,
+    slot_time TIMESTAMPTZ NOT NULL,
+    conflict_reason TEXT,
+    resolved BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Create indexes for new tables
+CREATE INDEX IF NOT EXISTS idx_booking_attempts_lead_id ON booking_attempts(lead_id);
+CREATE INDEX IF NOT EXISTS idx_booking_attempts_idempotency_key ON booking_attempts(id);
+CREATE INDEX IF NOT EXISTS idx_booking_attempts_status ON booking_attempts(status);
+CREATE INDEX IF NOT EXISTS idx_waitlist_lead_id ON waitlist(lead_id);
+CREATE INDEX IF NOT EXISTS idx_waitlist_service_location ON waitlist(service, location);
+CREATE INDEX IF NOT EXISTS idx_waitlist_fit_score ON waitlist(fit_score DESC);
+CREATE INDEX IF NOT EXISTS idx_waitlist_attempts_waitlist_id ON waitlist_attempts(waitlist_id);
+CREATE INDEX IF NOT EXISTS idx_booking_metrics_type ON booking_metrics(metric_type);
+CREATE INDEX IF NOT EXISTS idx_booking_metrics_recorded_at ON booking_metrics(recorded_at);
+CREATE INDEX IF NOT EXISTS idx_booking_conflicts_lead_id ON booking_conflicts(lead_id);
+CREATE INDEX IF NOT EXISTS idx_booking_conflicts_resolved ON booking_conflicts(resolved);
+
+-- Enable RLS for new tables
+ALTER TABLE booking_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE waitlist ENABLE ROW LEVEL SECURITY;
+ALTER TABLE waitlist_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE booking_metrics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE booking_conflicts ENABLE ROW LEVEL SECURITY;
+
+-- Create RLS policies for new tables
+CREATE POLICY IF NOT EXISTS "Allow all access to booking_attempts" ON booking_attempts FOR ALL USING (true);
+CREATE POLICY IF NOT EXISTS "Allow all access to waitlist" ON waitlist FOR ALL USING (true);
+CREATE POLICY IF NOT EXISTS "Allow all access to waitlist_attempts" ON waitlist_attempts FOR ALL USING (true);
+CREATE POLICY IF NOT EXISTS "Allow all access to booking_metrics" ON booking_metrics FOR ALL USING (true);
+CREATE POLICY IF NOT EXISTS "Allow all access to booking_conflicts" ON booking_conflicts FOR ALL USING (true);
+
+-- Create triggers for updating updated_at on new tables
+CREATE TRIGGER update_booking_attempts_updated_at
+    BEFORE UPDATE ON booking_attempts
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- Insert enhanced sample data
 INSERT INTO properties (mls_id, price, address, location, property_type, bedrooms, bathrooms, square_feet, year_built, latitude, longitude, amenities, details, description) VALUES
 ('MIA001', 250000, '123 Ocean Dr #1B', 'Miami Beach', 'Condo', 1, 1, 800, 2020, 25.7907, -80.1300, '{"pool": true, "parking": true, "gym": true}', '{"view": "ocean", "floor": "1"}', 'Beautiful oceanview condo in the heart of South Beach'),

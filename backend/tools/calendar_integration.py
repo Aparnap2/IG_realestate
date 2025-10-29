@@ -139,11 +139,12 @@ class GoogleCalendarClient:
         description: str = "",
         attendee_emails: List[str] = None,
         location: str = "",
-        calendar_id: str = 'primary'
+        calendar_id: str = 'primary',
+        idempotency_key: str = None
     ) -> Dict[str, Any]:
         """
         Create a calendar event with Google Meet link.
-        
+
         Args:
             start_time: Event start time
             end_time: Event end time
@@ -152,9 +153,10 @@ class GoogleCalendarClient:
             attendee_emails: List of attendee email addresses
             location: Event location
             calendar_id: Calendar to create event in
-            
+            idempotency_key: Optional idempotency key for conflict detection
+
         Returns:
-            Dictionary with event details
+            Dictionary with event details including etag
         """
         try:
             if not self.service:
@@ -193,6 +195,12 @@ class GoogleCalendarClient:
                     ]
                 }
             }
+
+            # Add idempotency key if provided
+            if idempotency_key:
+                event_body.setdefault('extendedProperties', {})
+                event_body['extendedProperties'].setdefault('private', {})
+                event_body['extendedProperties']['private']['idempotency_key'] = idempotency_key
             
             # Create the event
             event = self.service.events().insert(
@@ -218,6 +226,7 @@ class GoogleCalendarClient:
                 'end_time': end_time.isoformat(),
                 'summary': summary,
                 'attendees': attendee_emails or [],
+                'etag': event.get('etag'),
                 'status': 'created'
             }
             
@@ -238,7 +247,130 @@ class GoogleCalendarClient:
                 "start_time": start_time.isoformat()
             })
             return self._mock_create_event(start_time, end_time, summary, attendee_emails)
-    
+
+    def get_event_by_idempotency_key(self, idempotency_key: str, calendar_id: str = 'primary') -> Optional[Dict[str, Any]]:
+        """
+        Get event by idempotency key from extended properties.
+
+        Args:
+            idempotency_key: Idempotency key to search for
+            calendar_id: Calendar to search in
+
+        Returns:
+            Event dictionary or None if not found
+        """
+        try:
+            if not self.service:
+                return None
+
+            # Query events with the idempotency key
+            events_result = self.service.events().list(
+                calendarId=calendar_id,
+                privateExtendedProperty=f"idempotency_key={idempotency_key}",
+                singleEvents=True,
+                orderBy='startTime'
+            ).execute()
+
+            events = events_result.get('items', [])
+            if events:
+                event = events[0]  # Return first match
+                return {
+                    'event_id': event['id'],
+                    'etag': event.get('etag'),
+                    'summary': event.get('summary'),
+                    'start': event.get('start'),
+                    'end': event.get('end'),
+                    'extended_properties': event.get('extendedProperties', {})
+                }
+
+            return None
+
+        except Exception as e:
+            audit_log_event("get_event_by_idempotency_error", {
+                "error": str(e),
+                "idempotency_key": idempotency_key
+            })
+            return None
+
+    def update_event_metadata(self, event_id: str, metadata: Dict[str, Any], calendar_id: str = 'primary') -> bool:
+        """
+        Update event extended properties with metadata.
+
+        Args:
+            event_id: Event ID to update
+            metadata: Metadata to store in extended properties
+            calendar_id: Calendar containing the event
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if not self.service:
+                return True  # Mock success
+
+            # Get current event
+            event = self.service.events().get(
+                calendarId=calendar_id,
+                eventId=event_id
+            ).execute()
+
+            # Update extended properties
+            event.setdefault('extendedProperties', {})
+            event['extendedProperties'].setdefault('private', {})
+            event['extendedProperties']['private'].update(metadata)
+
+            # Update the event
+            self.service.events().update(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=event,
+                sendUpdates='none'  # Don't send updates for metadata changes
+            ).execute()
+
+            audit_log_event("event_metadata_updated", {
+                "event_id": event_id,
+                "metadata_keys": list(metadata.keys())
+            })
+
+            return True
+
+        except Exception as e:
+            audit_log_event("event_metadata_update_error", {
+                "error": str(e),
+                "event_id": event_id
+            })
+            return False
+
+    def get_event_etag(self, event_id: str, calendar_id: str = 'primary') -> Optional[str]:
+        """
+        Get current ETag for an event.
+
+        Args:
+            event_id: Event ID
+            calendar_id: Calendar containing the event
+
+        Returns:
+            ETag string or None if not found
+        """
+        try:
+            if not self.service:
+                return f"mock_etag_{event_id}"
+
+            event = self.service.events().get(
+                calendarId=calendar_id,
+                eventId=event_id,
+                fields='etag'
+            ).execute()
+
+            return event.get('etag')
+
+        except Exception as e:
+            audit_log_event("get_event_etag_error", {
+                "error": str(e),
+                "event_id": event_id
+            })
+            return None
+
     def update_event(
         self,
         event_id: str,

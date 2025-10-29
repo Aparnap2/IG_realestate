@@ -40,7 +40,11 @@
         "MAX_MEMORY_ENTRIES": "1000",
         "MEMORY_RETENTION_DAYS": "30"
       },
-      "disabled": false
+      "disabled": false,
+      "alwaysAllow": [
+        "get-library-docs",
+        "resolve-library-id"
+      ]
     },
     "memory-mcp": {
       "command": "npx",

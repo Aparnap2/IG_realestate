@@ -6,6 +6,7 @@ import Login from './components/Login'
 import CompanySelector from './components/CompanySelector'
 import AdminLeadMagnets from './pages/AdminLeadMagnets'
 import AdminConversations from './pages/AdminConversations'
+import AnalyticsDashboard from './components/AnalyticsDashboard'
 import { AuthProvider, useAuth } from './hooks/useAuth'
 import { Company } from './lib/supabase'
 
@@ -125,6 +126,16 @@ function AppContent() {
           element={
             selectedCompany ? (
               <AdminConversations company={selectedCompany} />
+            ) : (
+              <Navigate to="/" replace />
+            )
+          }
+        />
+        <Route
+          path="/admin/analytics"
+          element={
+            selectedCompany ? (
+              <AnalyticsDashboard />
             ) : (
               <Navigate to="/" replace />
             )

@@ -10,6 +10,3 @@ celery_app.conf.result_backend = os.getenv("CELERY_RESULT_BACKEND", "redis://loc
 
 # Auto-discover tasks
 celery_app.autodiscover_tasks(["backend.tasks"])
-
-# Import comment processing task
-from tasks.comment_intake import process_comment_task

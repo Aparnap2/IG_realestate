@@ -1,0 +1,425 @@
+{
+  "sequences": {
+    "real_estate": {
+      "high_intent": {
+        "intent_threshold": 0.7,
+        "total_duration_days": 21,
+        "ab_test_enabled": false,
+        "touch_points": [
+          {
+            "day": 1,
+            "channel": "sms",
+            "template_key": "market_insights",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 3,
+            "channel": "email",
+            "template_key": "property_listings",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 7,
+            "channel": "sms",
+            "template_key": "neighborhood_guide",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 14,
+            "channel": "call",
+            "template_key": "consultation_booking",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 21,
+            "channel": "email",
+            "template_key": "market_update",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          }
+        ]
+      },
+      "low_intent": {
+        "intent_threshold": 0.6,
+        "total_duration_days": 10,
+        "ab_test_enabled": false,
+        "touch_points": [
+          {
+            "day": 2,
+            "channel": "sms",
+            "template_key": "budget_education",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 5,
+            "channel": "email",
+            "template_key": "market_trends",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 10,
+            "channel": "sms",
+            "template_key": "timeline_check",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          }
+        ]
+      }
+    },
+    "fitness": {
+      "high_intent": {
+        "intent_threshold": 0.5,
+        "total_duration_days": 10,
+        "ab_test_enabled": false,
+        "touch_points": [
+          {
+            "day": 1,
+            "channel": "sms",
+            "template_key": "class_schedule",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 2,
+            "channel": "email",
+            "template_key": "facility_tour",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 5,
+            "channel": "sms",
+            "template_key": "trial_reminder",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 10,
+            "channel": "call",
+            "template_key": "membership_offer",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          }
+        ]
+      }
+    },
+    "restaurant": {
+      "high_intent": {
+        "intent_threshold": 0.55,
+        "total_duration_days": 14,
+        "ab_test_enabled": false,
+        "touch_points": [
+          {
+            "day": 1,
+            "channel": "sms",
+            "template_key": "menu_highlights",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 3,
+            "channel": "email",
+            "template_key": "event_packages",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 7,
+            "channel": "sms",
+            "template_key": "chef_profile",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 14,
+            "channel": "call",
+            "template_key": "table_reservation",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          }
+        ]
+      }
+    },
+    "hotel": {
+      "high_intent": {
+        "intent_threshold": 0.7,
+        "total_duration_days": 10,
+        "ab_test_enabled": true,
+        "touch_points": [
+          {
+            "day": 1,
+            "channel": "sms",
+            "template_key": "welcome_message",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 2,
+            "channel": "email",
+            "template_key": "room_options",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 5,
+            "channel": "sms",
+            "template_key": "booking_reminder",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          },
+          {
+            "day": 10,
+            "channel": "call",
+            "template_key": "concierge_service",
+            "content": null,
+            "personalization_data": null,
+            "compliance_checked": false
+          }
+        ]
+      }
+    }
+  },
+  "templates": {
+    "real_estate": {
+      "market_insights": {
+        "template": "Hi {first_name}! Here are the latest market insights for {target_area}: {market_data}",
+        "personalization_fields": [
+          "first_name",
+          "target_area",
+          "market_data"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "property_listings": {
+        "template": "Hi {first_name}! We found {listing_count} new properties matching your ${budget} budget in {location}. View them here: {listing_url}",
+        "personalization_fields": [
+          "first_name",
+          "listing_count",
+          "budget",
+          "location",
+          "listing_url"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "neighborhood_guide": {
+        "template": "Hi {first_name}! Here's your neighborhood guide for {location} with top amenities: {amenities}",
+        "personalization_fields": [
+          "first_name",
+          "location",
+          "amenities"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "consultation_booking": {
+        "template": "Hi {first_name}! Ready to schedule your consultation? Available times: {available_times}",
+        "personalization_fields": [
+          "first_name",
+          "available_times"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "market_update": {
+        "template": "Hi {first_name}! Market update for {location}: {update_summary} New listings: {new_listings}",
+        "personalization_fields": [
+          "first_name",
+          "location",
+          "update_summary",
+          "new_listings"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "budget_education": {
+        "template": "Hi {first_name}! Let's discuss financing options for your ${budget} budget. {financing_info}",
+        "personalization_fields": [
+          "first_name",
+          "budget",
+          "financing_info"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "market_trends": {
+        "template": "Hi {first_name}! Market trends in {location}: {trend_data} Inventory levels: {inventory_info}",
+        "personalization_fields": [
+          "first_name",
+          "location",
+          "trend_data",
+          "inventory_info"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "timeline_check": {
+        "template": "Hi {first_name}! Just checking in on your {timeline} timeline. Any updates needed?",
+        "personalization_fields": [
+          "first_name",
+          "timeline"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      }
+    },
+    "fitness": {
+      "class_schedule": {
+        "template": "Hi {first_name}! Class schedule availability for {membership_type}: {schedule_info}",
+        "personalization_fields": [
+          "first_name",
+          "membership_type",
+          "schedule_info"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "facility_tour": {
+        "template": "Hi {first_name}! Ready for a facility tour? Available times: {tour_times}",
+        "personalization_fields": [
+          "first_name",
+          "tour_times"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "trial_reminder": {
+        "template": "Hi {first_name}! Your trial class is scheduled for {trial_time}. Benefits: {trial_benefits}",
+        "personalization_fields": [
+          "first_name",
+          "trial_time",
+          "trial_benefits"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "membership_offer": {
+        "template": "Hi {first_name}! Special membership offer: {offer_details}. Limited time: {expiry_date}",
+        "personalization_fields": [
+          "first_name",
+          "offer_details",
+          "expiry_date"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      }
+    },
+    "restaurant": {
+      "menu_highlights": {
+        "template": "Hi {first_name}! Today's menu highlights: {menu_items}. Chef's special: {chef_special}",
+        "personalization_fields": [
+          "first_name",
+          "menu_items",
+          "chef_special"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "event_packages": {
+        "template": "Hi {first_name}! Event packages for {party_size}: {package_options}. Pricing: {pricing_info}",
+        "personalization_fields": [
+          "first_name",
+          "party_size",
+          "package_options",
+          "pricing_info"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "chef_profile": {
+        "template": "Hi {first_name}! Meet our chef {chef_name} - {chef_background}. Today's cuisine: {cuisine_type}",
+        "personalization_fields": [
+          "first_name",
+          "chef_name",
+          "chef_background",
+          "cuisine_type"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      },
+      "table_reservation": {
+        "template": "Hi {first_name}! Table reservation available for {party_size} on {date}. Special: {special_offer}",
+        "personalization_fields": [
+          "first_name",
+          "party_size",
+          "date",
+          "special_offer"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      }
+    },
+    "real": {
+      "estate_market_insights": {
+        "template": "Hi {first_name}! Custom market insights for {target_area}: {market_data}",
+        "personalization_fields": [
+          "first_name",
+          "target_area",
+          "market_data"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": null
+      }
+    },
+    "hotel": {
+      "welcome_message": {
+        "template": "Hi {first_name}! Welcome to {hotel_name}. Your room {room_number} is ready. {check_in_info}",
+        "personalization_fields": [
+          "first_name",
+          "hotel_name",
+          "room_number",
+          "check_in_info"
+        ],
+        "compliance_required": true,
+        "channel_specific": false,
+        "a_b_test_variants": [
+          "Hello {first_name}! Your {hotel_name} room {room_number} awaits. {check_in_info}",
+          "Greetings {first_name}! Welcome to {hotel_name}. Room {room_number} ready. {check_in_info}"
+        ]
+      }
+    }
+  }
+}

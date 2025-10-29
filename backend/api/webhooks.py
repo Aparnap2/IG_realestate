@@ -20,6 +20,9 @@ from utils.audit import audit_log_event
 from utils.redis_client import redis_client
 from tasks.comment_intake import process_comment_event
 
+# Self-Driving Booking Ops 2.0 imports
+from booking.message_bus import MessageBus
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -225,30 +228,51 @@ async def handle_comment_webhook(request: Request):
         
         # Extract comment events
         comment_events = extract_comment_data(webhook_data)
-        
+
         if not comment_events:
             logger.debug("No comment events found in webhook")
             return {"status": "success", "processed": 0}
-        
+
         processed_count = 0
-        
+        message_bus = MessageBus()
+
         # Process each comment event
         for comment_event in comment_events:
             try:
-                # Skip duplicates
-                if is_duplicate_comment(comment_event["comment_id"]):
-                    logger.debug(f"Skipping duplicate comment: {comment_event['comment_id']}")
-                    continue
-                
-                # Check for trigger keywords
+                # Check for trigger keywords first
                 if not contains_trigger_keyword(comment_event["comment_text"]):
                     logger.debug(f"Comment without trigger keywords: {comment_event['comment_id']}")
                     # Still mark as processed to avoid rechecking
                     mark_comment_processed(comment_event["comment_id"])
                     continue
-                
-                # Record comment event with audit log
-                audit_log_event("comment_trigger_detected", {
+
+                # Normalize message through MessageBus
+                normalized_payload = {
+                    "from": comment_event["commenter_id"],
+                    "text": comment_event["comment_text"],
+                    "timestamp": comment_event["timestamp"],
+                    "channel": "instagram",
+                    "comment_id": comment_event["comment_id"],
+                    "post_id": comment_event["post_id"],
+                    "commenter_name": comment_event["commenter_name"],
+                    "ig_account_id": comment_event["ig_account_id"]
+                }
+
+                normalized_message = message_bus.normalize_message('instagram', normalized_payload)
+
+                # Skip duplicates using MessageBus
+                if message_bus.is_duplicate(normalized_message.message_uuid):
+                    logger.debug(f"Skipping duplicate message: {normalized_message.message_uuid}")
+                    continue
+
+                # Claim message for processing
+                if not message_bus.claim_message(normalized_message.message_uuid):
+                    logger.debug(f"Failed to claim message: {normalized_message.message_uuid}")
+                    continue
+
+                # Record message event with audit log
+                audit_log_event("instagram_message_received", {
+                    "message_uuid": normalized_message.message_uuid,
                     "comment_id": comment_event["comment_id"],
                     "post_id": comment_event["post_id"],
                     "commenter_id": comment_event["commenter_id"],
@@ -257,18 +281,24 @@ async def handle_comment_webhook(request: Request):
                     "ig_account_id": comment_event["ig_account_id"],
                     "timestamp": datetime.now().isoformat()
                 })
-                
-                # Enqueue background job for comment processing
+
+                # Enqueue background job for message processing
                 from celery_app import process_comment_task
-                task_result = process_comment_task.delay(comment_event)
-                
-                logger.info(f"Enqueued comment processing task: {task_result.id}")
-                
-                # Mark as processed to prevent duplicates
+                task_result = process_comment_task.delay(normalized_message)
+
+                logger.info(f"Enqueued message processing task: {task_result.id} (uuid: {normalized_message.message_uuid})")
+
+                # Mark message as processed
+                message_bus.mark_processed(normalized_message.message_uuid, {
+                    "task_id": task_result.id,
+                    "channel": "instagram"
+                })
+
+                # Legacy processing for backward compatibility
                 mark_comment_processed(comment_event["comment_id"])
-                
+
                 processed_count += 1
-                
+
             except Exception as e:
                 logger.error(f"Error processing comment event {comment_event.get('comment_id')}: {e}")
                 # Continue processing other comments
