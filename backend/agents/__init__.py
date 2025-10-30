@@ -21,15 +21,27 @@ from . import qualifier as _qualifier  # noqa: E402
 from . import scheduler as _scheduler  # noqa: E402
 from . import followup as _followup  # noqa: E402
 from . import prd_compliant_workflow as _prd_workflow  # noqa: E402
+from . import warmup as _warmup  # noqa: E402
+from . import value_delivery as _value_delivery  # noqa: E402
+from . import router as _router  # noqa: E402
+from . import offramp as _offramp  # noqa: E402
 
 _register_legacy_module("qualifier", _qualifier)
 _register_legacy_module("scheduler", _scheduler)
 _register_legacy_module("followup", _followup)
 _register_legacy_module("prd_compliant_workflow", _prd_workflow)
+_register_legacy_module("warmup", _warmup)
+_register_legacy_module("value_delivery", _value_delivery)
+_register_legacy_module("router", _router)
+_register_legacy_module("offramp", _offramp)
 
 __all__ = [
     "_qualifier",
     "_scheduler",
     "_followup",
     "_prd_workflow",
+    "_warmup",
+    "_value_delivery",
+    "_router",
+    "_offramp",
 ]

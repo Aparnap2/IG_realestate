@@ -24,6 +24,9 @@ if "agents" not in sys.modules:
 
 sys.modules["agents.qualifier"] = sys.modules[__name__]
 
+# Provide QualifierAgent for legacy imports via prd_compliant_workflow implementation
+from .prd_compliant_workflow import QualifierAgent  # noqa: E402
+
 @track_performance
 def qualifier_node(state: AgentState) -> Dict[str, Any]:
     """

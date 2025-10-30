@@ -336,7 +336,7 @@ class TestEngagementTracker:
         user_id = "test_user_123"
         
         # Mock all the dependent methods
-        tracker.get_touch_count = Mock(side_effect=lambda user_id, days=30 if days == 30 else 5)
+        tracker.get_touch_count = Mock(side_effect=lambda user_id, days=30: 30 if days == 30 else 5)
         tracker.calculate_engagement_momentum = Mock(return_value=0.75)
         tracker.get_touch_history = Mock(return_value=[
             {"touch_type": "email", "content": "Test email"}
