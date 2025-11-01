@@ -260,8 +260,13 @@ class QualifierAgent:
                 "error_message": str(e)
             }
 
-# Simplified: No separate SchedulerAgent class for Instagram DM automation
-# All scheduling functionality removed for simplification
+class SchedulerAgent:
+    """
+    Scheduler Agent class for testing compatibility.
+    """
+    
+    def __init__(self):
+        pass
     
     def process(self, state: AgentState) -> Dict[str, Any]:
         """Process lead through scheduling"""
@@ -690,8 +695,13 @@ class QualifierAgent:
         
         return conflict_free_slots
 
-# Simplified: No separate FollowUpAgent class for Instagram DM automation
-# All follow-up functionality integrated into QualifierAgent
+class FollowUpAgent:
+    """
+    Follow-up Agent class for testing compatibility.
+    """
+    
+    def __init__(self):
+        pass
     
     def process(self, state: AgentState) -> Dict[str, Any]:
         """Process lead through follow-up"""

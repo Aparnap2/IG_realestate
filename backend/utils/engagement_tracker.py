@@ -330,8 +330,8 @@ class EngagementTracker:
             # 2. High engagement momentum (>0.7)
             high_momentum = momentum > 0.7
             
-            # 3. Good diversity (>50% of touch types)
-            good_diversity = diversity_factor > 0.5
+            # 3. Good diversity (>=50% of touch types)
+            good_diversity = diversity_factor >= 0.5
             
             # 4. Recent activity (at least one touch in last 7 days)
             recent_activity = self.get_touch_count(user_id, days=7) > 0

@@ -31,3 +31,9 @@ class AgentState(TypedDict):
     booking_state: Optional[Dict[str, Any]]  # State machine context
     message_uuid: Optional[str]  # Message deduplication tracking
     booking_metrics: Optional[Dict[str, Any]]  # Latency/conflict tracking
+
+class ConversationMessage(BaseModel):
+    """Simple conversation message model for testing compatibility."""
+    role: str
+    content: str
+    timestamp: Optional[datetime] = None

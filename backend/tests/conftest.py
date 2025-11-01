@@ -30,21 +30,21 @@ def event_loop():
 @pytest.fixture
 def mock_settings():
     """Mock settings for testing."""
-    from config import Config
+    from config import TestingSettings
     
-    settings = Config()
-    # Override with test values
-    settings.ENVIRONMENT = "testing"
-    settings.DEBUG = True
-    settings.SUPABASE_URL = "http://localhost:54321"
-    settings.SUPABASE_KEY = "test_key"
-    settings.REDIS_URL = "redis://localhost:6380"
-    settings.OPENROUTER_API_KEY = "test_key"
-    settings.META_PAGE_ACCESS_TOKEN = "test_token"
-    settings.META_ACCESS_TOKEN = "test_verify"
-    settings.META_APP_SECRET = "test_secret"
-    
-    with patch('config.get_settings', return_value=settings):
+    with patch('config.get_settings') as mock_get_settings:
+        settings = TestingSettings()
+        # Override with test values
+        settings.SUPABASE_URL = "http://localhost:54321"
+        settings.SUPABASE_KEY = "test_key"
+        settings.REDIS_URL = "redis://localhost:6380"
+        settings.OPENROUTER_API_KEY = "test_key"
+        settings.INSTAGRAM_PAGE_ACCESS_TOKEN = "test_token"
+        settings.INSTAGRAM_VERIFY_TOKEN = "test_verify"
+        settings.INSTAGRAM_APP_SECRET = "test_secret"
+        settings.INSTAGRAM_PAGE_ID = "test_page_id"
+        
+        mock_get_settings.return_value = settings
         yield settings
 
 @pytest.fixture
@@ -179,22 +179,130 @@ def mock_temporal_graph():
         "recent_activity": 2
     })
     
-    with patch('temporal.graph_client.get_graphiti_client', return_value=mock_client):
+    with patch('temporal.graph_client.GraphClient') as mock_graph_client:
+        mock_graph_client.return_value = mock_client
+        yield mock_client
+
+@pytest.fixture
+def mock_supabase_client():
+    """Mock Supabase client for testing."""
+    mock_client = Mock()
+    
+    # Mock common Supabase operations
+    mock_table = Mock()
+    mock_client.table.return_value = mock_table
+    
+    # Chain table methods
+    mock_table.select.return_value = mock_table
+    mock_table.insert.return_value = mock_table
+    mock_table.upsert.return_value = mock_table
+    mock_table.update.return_value = mock_table
+    mock_table.delete.return_value = mock_table
+    mock_table.eq.return_value = mock_table
+    mock_table.lte.return_value = mock_table
+    mock_table.gte.return_value = mock_table
+    mock_table.order.return_value = mock_table
+    mock_table.limit.return_value = mock_table
+    mock_table.single.return_value = mock_table
+    mock_table.execute.return_value = Mock(data=[], error=None)
+    
+    with patch('utils.supabase_client.create_client') as mock_create_client:
+        mock_create_client.return_value = mock_client
+        with patch('utils.supabase_client.supabase', mock_client):
+            yield mock_client
+
+@pytest.fixture
+def mock_redis_client():
+    """Mock Redis client for testing."""
+    mock_client = Mock()
+    
+    # Mock common Redis operations
+    mock_client.get.return_value = None
+    mock_client.set.return_value = True
+    mock_client.setex.return_value = True
+    mock_client.delete.return_value = 1
+    mock_client.exists.return_value = 0
+    mock_client.ping.return_value = True
+    mock_client.flushdb.return_value = True
+    mock_client.close.return_value = None
+    
+    # Mock pipeline operations
+    mock_pipeline = Mock()
+    mock_pipeline.execute.return_value = []
+    mock_client.pipeline.return_value = mock_pipeline
+    
+    with patch('utils.redis_client.create_redis_client') as mock_create_client:
+        mock_create_client.return_value = mock_client
+        with patch('utils.redis_client.redis_client', mock_client):
+            yield mock_client
+
+@pytest.fixture
+def mock_llm_client():
+    """Mock LLM client for testing."""
+    mock_client = Mock()
+    mock_client.generate_response = AsyncMock(return_value={
+        "content": "Test response",
+        "confidence": 0.8
+    })
+    mock_client.analyze_intent = AsyncMock(return_value={
+        "intent": "booking_interest",
+        "confidence": 0.9
+    })
+    mock_client.score_lead = AsyncMock(return_value=0.8)
+    
+    with patch('utils.llm_client.LLMClient') as mock_llm_client_class:
+        mock_llm_client_class.return_value = mock_client
         yield mock_client
 
 
 @pytest.fixture
-def qualifier_agent(mock_settings, mock_supabase, mock_compliance, mock_audit, mock_temporal_graph):
-    """Provide a QualifierAgent with dependencies mocked."""
-    from backend.agents.prd_compliant_workflow import QualifierAgent
-    return QualifierAgent()
-
+def mock_router_agent():
+    """Mock router agent."""
+    mock_agent = Mock()
+    mock_agent.route_lead = AsyncMock(return_value={
+        "lead": None,
+        "messages": [],
+        "next_agent": "qualifier",
+        "requires_human_review": False
+    })
+    return mock_agent
 
 @pytest.fixture
-def router_agent(mock_settings, mock_supabase, mock_compliance, mock_audit, mock_temporal_graph):
-    """Provide a RouterAgent with dependencies mocked."""
-    from backend.agents.router import RouterAgent
-    return RouterAgent()
+def mock_qualifier_agent():
+    """Mock qualifier agent."""
+    mock_agent = Mock()
+    mock_agent.process_lead = AsyncMock(return_value={
+        "lead": None,
+        "messages": [],
+        "next_agent": "scheduler",
+        "requires_human_review": False,
+        "qualified_score": 0.8
+    })
+    return mock_agent
+
+@pytest.fixture
+def mock_value_delivery_agent():
+    """Mock value delivery agent."""
+    mock_agent = Mock()
+    mock_agent.deliver_value = AsyncMock(return_value={
+        "lead": None,
+        "messages": [],
+        "next_agent": "qualifier",
+        "requires_human_review": False
+    })
+    return mock_agent
+
+@pytest.fixture
+def mock_followup_agent():
+    """Mock followup agent."""
+    mock_agent = Mock()
+    mock_agent.nurture_lead = AsyncMock(return_value={
+        "lead": None,
+        "messages": [],
+        "next_agent": "value_delivery",
+        "requires_human_review": False
+    })
+    return mock_agent
 
 @pytest.fixture
 def agent_state(sample_lead):

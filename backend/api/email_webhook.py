@@ -341,8 +341,26 @@ async def handle_sendgrid_webhook(request: Request):
                     "normalized_uuid": normalized_message.message_uuid
                 })
 
-                # Enqueue async processing (placeholder)
-                logger.info(f"Enqueued SendGrid email processing: {normalized_message.message_uuid}")
+                # Enqueue async processing with Celery
+                from backend.tasks.email_processing import process_email_message
+                
+                # Convert normalized_message to dict for Celery serialization
+                normalized_message_dict = {
+                    'message_uuid': normalized_message.message_uuid,
+                    'lead_id': normalized_message.lead_id,
+                    'content': normalized_message.content,
+                    'channel': normalized_message.channel.value if hasattr(normalized_message.channel, 'value') else str(normalized_message.channel),
+                    'timestamp': normalized_message.timestamp.isoformat() if hasattr(normalized_message.timestamp, 'isoformat') else str(normalized_message.timestamp),
+                    'metadata': normalized_message.metadata
+                }
+                
+                try:
+                    # Queue the task for async processing
+                    task_result = process_email_message.delay(normalized_message_dict)
+                    logger.info(f"Enqueued SendGrid email processing: {normalized_message.message_uuid} (Task ID: {task_result.id})")
+                except Exception as celery_error:
+                    logger.error(f"Failed to enqueue SendGrid email processing: {celery_error}")
+                    # Continue processing other emails even if Celery fails
 
                 # Mark as processed
                 email_handler.mark_email_processed(message["message_id"], {
@@ -453,8 +471,26 @@ async def handle_mailgun_webhook(request: Request):
                 "normalized_uuid": normalized_message.message_uuid
             })
 
-            # Enqueue async processing (placeholder)
-            logger.info(f"Enqueued Mailgun email processing: {normalized_message.message_uuid}")
+            # Enqueue async processing with Celery
+            from backend.tasks.email_processing import process_email_message
+            
+            # Convert normalized_message to dict for Celery serialization
+            normalized_message_dict = {
+                'message_uuid': normalized_message.message_uuid,
+                'lead_id': normalized_message.lead_id,
+                'content': normalized_message.content,
+                'channel': normalized_message.channel.value if hasattr(normalized_message.channel, 'value') else str(normalized_message.channel),
+                'timestamp': normalized_message.timestamp.isoformat() if hasattr(normalized_message.timestamp, 'isoformat') else str(normalized_message.timestamp),
+                'metadata': normalized_message.metadata
+            }
+            
+            try:
+                # Queue the task for async processing
+                task_result = process_email_message.delay(normalized_message_dict)
+                logger.info(f"Enqueued Mailgun email processing: {normalized_message.message_uuid} (Task ID: {task_result.id})")
+            except Exception as celery_error:
+                logger.error(f"Failed to enqueue Mailgun email processing: {celery_error}")
+                # Continue processing other emails even if Celery fails
 
             # Mark as processed
             email_handler.mark_email_processed(message["message_id"], {

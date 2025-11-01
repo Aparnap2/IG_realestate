@@ -873,3 +873,16 @@ def update_lead_delivery_tracking(lead: Any, intent: Dict[str, Any], result: Dic
     
     # Update last interaction
     lead.last_interaction_at = datetime.now()
+
+
+class ValueDeliveryAgent:
+    """
+    Value Delivery Agent class wrapper for testing compatibility.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def process(self, state):
+        """Process state through value delivery"""
+        return value_delivery_node(state)

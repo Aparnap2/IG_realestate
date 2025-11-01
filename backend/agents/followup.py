@@ -494,3 +494,16 @@ def schedule_nurture_followup(lead: Any, days_ahead: int = 7) -> Dict[str, Any]:
         'message': f"Scheduled nurture follow-up for {followup_date.strftime('%B %d, %Y')}",
         'created_at': datetime.now().isoformat()
     }
+
+
+class FollowupAgent:
+    """
+    Follow-up Agent class wrapper for testing compatibility.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def process(self, state):
+        """Process state through follow-up"""
+        return followup_node(state)

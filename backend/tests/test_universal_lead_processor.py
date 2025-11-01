@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch, AsyncMock
 from typing import Dict, Any
 
 # Import the universal lead processor
-from ..pipeline.universal_lead_processor import (
+from backend.pipeline.universal_lead_processor import (
     UniversalLeadProcessor,
     WorkflowType,
     IndustryType,

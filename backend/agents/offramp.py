@@ -665,3 +665,16 @@ def schedule_future_reengagement(lead: Any, timeline_months: int) -> Dict[str, A
         "reason": "future_reengagement",
         "message": f"I'll reach out again around {reengage_date.strftime('%B %d, %Y')} to see if your situation has changed."
     }
+
+
+class OfframpAgent:
+    """
+    Offramp Agent class wrapper for testing compatibility.
+    """
+    
+    def __init__(self):
+        pass
+    
+    def process(self, state):
+        """Process state through off-ramp"""
+        return offramp_node(state)
