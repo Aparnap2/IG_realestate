@@ -41,8 +41,16 @@ except ImportError:
 from ..utils.response_tracker import ResponseTimeTracker, response_tracker
 from ..utils.lead_scoring import LeadScoringSystem, calculate_enhanced_lead_score
 from ..utils.engagement_tracker import EngagementTracker, engagement_tracker
+from ..utils.correlation_tracker import correlation_tracker, CorrelationType
 from ..automation.nurture_sequences import NurtureSequenceManager, nurture_sequence_manager
-# Removed old booking engine import - now using Self-Driving Booking Ops 2.0 state machine
+# Import booking state machine integration for T0+120s automation
+from ..integrations.booking_state_machine_integration import (
+    booking_integration,
+    BookingTrigger,
+    trigger_booking_flow_immediate,
+    process_qualification_completion,
+    handle_t0_120s_automation
+)
 from ..communication.multi_channel_manager import MultiChannelManager, multi_channel_manager
 from ..config.industry_configs import get_industry_config_manager, IndustryConfig
 from ..utils.supabase_client import save_or_update_lead
@@ -1676,26 +1684,75 @@ class UniversalLeadProcessor:
         context: ProcessingContext,
         assessment: LeadReadinessAssessment
     ) -> Dict[str, Any]:
-        """Execute booking workflow using smart booking engine."""
+        """Execute booking workflow using booking state machine integration."""
         try:
-            # Trigger booking flow through smart booking engine - now handled by state machine
-            # booking_result = self.booking_engine.trigger_booking_flow(
-            #     user_id=context.user_id,
-            #     booking_type="consultation",  # Default booking type
-            #     lead_data=context.lead_data,
-            booking_result = {"status": "not_implemented", "message": "Booking now handled by state machine"}
-            # industry_type=context.industry_type
-            # )
+            logger.info(f"🚀 EXECUTING BOOKING WORKFLOW for user {context.user_id}")
             
-            return {
-                "status": "booking_initiated",
-                "booking_result": booking_result,
-                "workflow_type": WorkflowType.BOOKING_FLOW.value
-            }
+            # Check if this is a T0+120s automation scenario (qualification completion)
+            qualification_completed = context.lead_data.get('qualification_completed', False)
+            time_since_first_contact = datetime.now() - context.processing_start_time
+            
+            if qualification_completed and time_since_first_contact >= timedelta(seconds=120):
+                # T0+120s automation scenario - qualification just completed
+                logger.info(f"🎯 T0+120s automation triggered for user {context.user_id}")
+                booking_result = await handle_t0_120s_automation(
+                    user_id=context.user_id,
+                    lead_data=context.lead_data,
+                    industry_type=context.industry_type,
+                    correlation_id=context.metadata.get('correlation_id')
+                )
+                
+                return {
+                    "status": "t0_120s_automation_executed",
+                    "booking_result": booking_result,
+                    "workflow_type": WorkflowType.BOOKING_FLOW.value,
+                    "automation_trigger": "qualification_completion",
+                    "time_elapsed_seconds": time_since_first_contact.total_seconds()
+                }
+            
+            elif assessment.booking_readiness:
+                # Standard booking trigger for ready leads
+                logger.info(f"📅 Triggering immediate booking flow for user {context.user_id}")
+                booking_result = await trigger_booking_flow_immediate(
+                    user_id=context.user_id,
+                    lead_data=context.lead_data,
+                    industry_type=context.industry_type,
+                    booking_type="consultation",
+                    correlation_id=context.metadata.get('correlation_id')
+                )
+                
+                return {
+                    "status": "booking_flow_initiated",
+                    "booking_result": booking_result,
+                    "workflow_type": WorkflowType.BOOKING_FLOW.value,
+                    "automation_trigger": "readiness_assessment"
+                }
+            
+            else:
+                # Fallback: Process qualification completion to prepare for booking
+                logger.info(f"🔄 Processing qualification completion for user {context.user_id}")
+                qualification_result = await process_qualification_completion(
+                    user_id=context.user_id,
+                    lead_data=context.lead_data,
+                    industry_type=context.industry_type,
+                    correlation_id=context.metadata.get('correlation_id')
+                )
+                
+                return {
+                    "status": "qualification_completion_processed",
+                    "qualification_result": qualification_result,
+                    "workflow_type": WorkflowType.BOOKING_FLOW.value,
+                    "next_step": "await_booking_trigger"
+                }
             
         except Exception as e:
-            logger.error(f"Error executing booking workflow: {e}")
-            return {"status": "error", "error": str(e)}
+            logger.error(f"Error executing booking workflow for user {context.user_id}: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "workflow_type": WorkflowType.BOOKING_FLOW.value,
+                "fallback_action": "manual_booking_required"
+            }
     
     async def _execute_nurture_workflow(
         self,

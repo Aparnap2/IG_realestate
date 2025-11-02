@@ -23,6 +23,7 @@ from schemas.state import AgentState
 from models.lead import Lead
 from utils.redis_client import redis_client, get_conversation_state, set_conversation_state
 from utils.llm_client import extract_lead_info, generate_response_message
+from utils.enhanced_llm_extraction import LangGraphExtractionNode, enhanced_extract_lead_info
 from tools import agent_tools, compliance as compliance_tools, qualifier_utils
 
 class QualifierAgent:
@@ -45,7 +46,7 @@ class QualifierAgent:
         ]
     
     def process(self, state: AgentState) -> Dict[str, Any]:
-        """Process lead through qualification"""
+        """Process lead through qualification with enhanced extraction"""
         lead = state["lead"]
         messages = state.get("messages", [])
         user_id = getattr(lead, "user_id", None)
@@ -68,10 +69,17 @@ class QualifierAgent:
                     })
                     set_conversation_state(user_id, conv_state)
 
-            # Extract information from message if not already present
+            # Extract information from message using enhanced extraction
             if not all([lead.budget, lead.location, lead.property_type]):
-                extracted_info = extract_lead_info(lead.message)
+                # Use enhanced extraction with context
+                prior_lead_data = lead.to_dict() if hasattr(lead, 'to_dict') else {}
+                extracted_info = enhanced_extract_lead_info(
+                    message=lead.message,
+                    user_id=user_id,
+                    prior_lead_data=prior_lead_data
+                )
                 
+                # Update lead with extracted information
                 if extracted_info.get("budget"):
                     lead.budget = extracted_info["budget"]
                 if extracted_info.get("location"):
@@ -82,6 +90,19 @@ class QualifierAgent:
                     lead.timeline = extracted_info["timeline"]
                 if extracted_info.get("desired_bedrooms"):
                     lead.desired_bedrooms = extracted_info["desired_bedrooms"]
+                
+                # Log extraction results
+                extraction_confidence = extracted_info.get("extraction_confidence", 0.0)
+                print(f"🤖 Enhanced extraction completed - Confidence: {extraction_confidence:.2f}")
+                print(f"   Extracted fields: {[k for k, v in extracted_info.items() if v is not None and k not in ['extraction_confidence', 'extraction_timestamp', 'extraction_method', 'new_information', 'updated_fields', 'conversation_stage']]}")
+                
+                # If extraction confidence is very low, use fallback extraction
+                if extraction_confidence < 0.3:
+                    print(f"⚠️ Low extraction confidence, using fallback")
+                    fallback_info = extract_lead_info(lead.message)
+                    for field in ["budget", "location", "property_type", "timeline", "desired_bedrooms"]:
+                        if fallback_info.get(field) and not getattr(lead, field, None):
+                            setattr(lead, field, fallback_info[field])
             
             # Query properties database
             db_results = []

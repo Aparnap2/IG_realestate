@@ -13,7 +13,7 @@ Intelligent multi-channel communication for lead nurturing with:
 import logging
 import json
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
 
@@ -23,6 +23,7 @@ from utils.engagement_tracker import engagement_tracker
 from utils.response_tracker import response_tracker
 from utils.llm_client import get_llm_response_sync
 from utils.audit import audit_log_event
+from ..middleware.compliance_enforcement import compliance_enforcement
 
 logger = logging.getLogger(__name__)
 
@@ -134,10 +135,13 @@ class MultiChannelManager:
             "Asia/Kolkata": {"start": 10, "end": 19}  # 10 AM - 7 PM IST
         }
     
-    def send_message(self, user_id: str, message: str, channel: str = "auto", 
+async def send_message(self, user_id: str, message: str, channel: str = "auto",
                    priority: str = "normal", message_type: str = "engagement") -> Dict[str, Any]:
         """
-        Send message via optimal channel with intelligent selection.
+        Send message via optimal channel with mandatory compliance enforcement.
+        
+        CRITICAL: Now uses mandatory compliance gate middleware for 100% compliance coverage.
+        This addresses Priority 1 Gap 1.2 - Compliance Enforcement Bypass.
         
         Args:
             user_id: Unique user identifier
@@ -163,16 +167,33 @@ class MultiChannelManager:
                     logger.warning(f"Invalid channel '{channel}', using auto-selection")
                     optimal_channel = self.get_optimal_channel(user_id, message_type, priority)
             
-            # Check compliance
-            if not self.check_compliance(user_id, message, optimal_channel, user_prefs.industry_type):
+            # CRITICAL: Use mandatory compliance gate for ALL messages
+            logger.info(f"🔒 ENFORCING COMPLIANCE for message to {user_id}")
+            
+            compliance_success, compliance_result = await compliance_enforcement.send_compliant_message(
+                lead_id=user_id,
+                message=message,
+                channel=optimal_channel.value,
+                correlation_id=f"mcm_{user_id}_{datetime.utcnow().timestamp()}",
+                message_metadata={
+                    "message_type": message_type,
+                    "priority": priority,
+                    "user_preferences": user_prefs.__dict__
+                }
+            )
+            
+            # Block non-compliant messages
+            if not compliance_success:
                 return {
                     "success": False,
-                    "error": "Message failed compliance check",
+                    "error": "Message blocked by compliance gate",
+                    "compliance_result": compliance_result,
                     "user_id": user_id,
-                    "channel": optimal_channel.value
+                    "channel": optimal_channel.value,
+                    "compliance_enforced": True
                 }
             
-            # Format message for channel
+            # Format message for channel (compliant message)
             formatted_message = self.format_message_for_channel(message, optimal_channel, message_type)
             
             # Create delivery tracking
@@ -186,7 +207,7 @@ class MultiChannelManager:
                 sent_at=datetime.utcnow()
             )
             
-            # Send via appropriate channel
+            # Send via appropriate channel (message already compliance-verified)
             delivery_result = self._send_via_channel(delivery, user_prefs)
             
             # Track delivery
@@ -202,22 +223,29 @@ class MultiChannelManager:
                     "priority": priority,
                     "message_type": message_type,
                     "channel_selected": optimal_channel.value,
-                    "selection_reason": delivery_result.get("selection_reason", "auto")
+                    "selection_reason": delivery_result.get("selection_reason", "auto"),
+                    "compliance_verified": True,
+                    "compliance_gate_version": "1.0"
                 }
             )
             
-            # Audit log
+            # Audit log with compliance verification
             audit_log_event(
-                event_type="message_sent",
+                event_type="compliant_message_sent",
                 entity_id=user_id,
                 payload={
                     "channel": optimal_channel.value,
                     "message_id": message_id,
                     "priority": priority,
                     "message_type": message_type,
-                    "success": delivery_result.get("success", False)
+                    "success": delivery_result.get("success", False),
+                    "compliance_verified": True,
+                    "compliance_result": compliance_result,
+                    "enforcement_method": "mandatory_gate"
                 }
             )
+            
+            logger.info(f"✅ COMPLIANT MESSAGE SENT: {user_id} via {optimal_channel.value}")
             
             return {
                 "success": delivery_result.get("success", False),
@@ -227,7 +255,9 @@ class MultiChannelManager:
                 "sent_at": delivery.sent_at.isoformat(),
                 "delivery_status": delivery_result.get("status", "failed"),
                 "selection_reason": delivery_result.get("selection_reason", "auto"),
-                "error": delivery_result.get("error")
+                "error": delivery_result.get("error"),
+                "compliance_verified": True,
+                "compliance_result": compliance_result
             }
             
         except Exception as e:
@@ -236,7 +266,8 @@ class MultiChannelManager:
                 "success": False,
                 "error": str(e),
                 "user_id": user_id,
-                "channel": channel
+                "channel": channel,
+                "compliance_verified": False
             }
     
     def get_user_preferences(self, user_id: str) -> UserPreferences:
@@ -1050,11 +1081,11 @@ class MultiChannelManager:
 # Global instance
 multi_channel_manager = MultiChannelManager()
 
-# Convenience functions for backward compatibility
-def send_message(user_id: str, message: str, channel: str = "auto", 
+# Convenience functions for backward compatibility (now async for compliance)
+async def send_message(user_id: str, message: str, channel: str = "auto",
                 priority: str = "normal", message_type: str = "engagement") -> Dict[str, Any]:
-    """Send message via optimal channel"""
-    return multi_channel_manager.send_message(user_id, message, channel, priority, message_type)
+    """Send message via optimal channel with mandatory compliance enforcement"""
+    return await multi_channel_manager.send_message(user_id, message, channel, priority, message_type)
 
 def get_user_preferences(user_id: str) -> UserPreferences:
     """Get user communication preferences"""

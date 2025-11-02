@@ -7,17 +7,120 @@ PRD-compliant LangGraph swarm architecture.
 import sys
 import os
 from celery import Celery
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import uuid
+import logging
 
 # Add the parent directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+import asyncio
 from models.lead import Lead
 from schemas.state import AgentState
 from workflow import create_workflow
 from utils.redis_client import store_conversation_history
 from utils.observability import track_performance, metrics_collector
+from utils.enhanced_llm_extraction import extract_intent_and_details, classify_high_intent_patterns
+from utils.lead_scoring import score_lead_with_intent
+from integrations.hubspot_client import HubSpotClient, auto_create_high_intent_contact
+
+logger = logging.getLogger(__name__)
+
+def _should_qualify_lead(intent_analysis: Dict[str, Any], pattern_analysis: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Phase 1: Determine if a lead should be qualified based on AI intent analysis.
+    
+    This function implements intelligent filtering to focus qualification resources
+    on high-converting prospects while filtering out low-quality leads.
+    
+    Args:
+        intent_analysis: AI intent analysis results
+        pattern_analysis: High-intent pattern detection results
+        
+    Returns:
+        Dictionary with qualification decision and reasoning
+    """
+    # Default thresholds for qualification
+    HIGH_INTENT_THRESHOLD = 0.75
+    MEDIUM_INTENT_THRESHOLD = 0.6
+    MIN_CONFIDENCE_THRESHOLD = 0.5
+    
+    intent_score = intent_analysis.get('intent_score', 0.0)
+    confidence = intent_analysis.get('confidence', 0.0)
+    intent_category = intent_analysis.get('intent_category', 'unknown')
+    booking_signals = intent_analysis.get('booking_signals', False)
+    budget_mentioned = intent_analysis.get('budget_mentioned', False)
+    
+    # Get pattern analysis results
+    immediate_qualification = pattern_analysis.get('immediate_qualification', False)
+    pattern_score = pattern_analysis.get('pattern_score', 0.0)
+    
+    # High-intent criteria: Any of these conditions qualify a lead
+    high_intent_conditions = [
+        # AI-detected high intent
+        (intent_score >= HIGH_INTENT_THRESHOLD and confidence >= MIN_CONFIDENCE_THRESHOLD),
+        
+        # Booking signals are always high-intent
+        booking_signals,
+        
+        # Immediate qualification patterns detected
+        immediate_qualification,
+        
+        # Budget mentions with decent confidence
+        (budget_mentioned and intent_score >= MEDIUM_INTENT_THRESHOLD and confidence >= 0.6),
+        
+        # Specific high-value intent categories
+        (intent_category in ['booking_intent', 'budget_inquiry'] and intent_score >= MEDIUM_INTENT_THRESHOLD),
+        
+        # High pattern score
+        (pattern_score >= 0.5)
+    ]
+    
+    # Check if any high-intent condition is met
+    should_qualify = any(high_intent_conditions)
+    
+    # Determine reason and category for metrics
+    if booking_signals:
+        reason = "Booking signals detected"
+        filter_category = "booking_signals"
+        create_crm_contact = True
+        high_intent_triggered = True
+    elif intent_score >= HIGH_INTENT_THRESHOLD:
+        reason = f"High AI intent score: {intent_score:.3f}"
+        filter_category = "high_intent_score"
+        create_crm_contact = True
+        high_intent_triggered = True
+    elif immediate_qualification:
+        reason = "High-intent patterns detected"
+        filter_category = "pattern_match"
+        create_crm_contact = True
+        high_intent_triggered = True
+    elif intent_category in ['booking_intent', 'budget_inquiry']:
+        reason = f"High-value intent category: {intent_category}"
+        filter_category = "intent_category"
+        create_crm_contact = True
+        high_intent_triggered = True
+    elif intent_score >= MEDIUM_INTENT_THRESHOLD:
+        reason = f"Medium AI intent score: {intent_score:.3f}"
+        filter_category = "medium_intent"
+        create_crm_contact = False
+        high_intent_triggered = False
+    else:
+        reason = f"Low intent score: {intent_score:.3f}"
+        filter_category = "low_intent"
+        create_crm_contact = False
+        high_intent_triggered = False
+    
+    return {
+        'should_qualify': should_qualify,
+        'reason': reason,
+        'filter_category': filter_category,
+        'create_crm_contact': create_crm_contact,
+        'high_intent_triggered': high_intent_triggered,
+        'intent_score': intent_score,
+        'confidence': confidence,
+        'qualification_threshold_met': should_qualify
+    }
 
 # Initialize Celery app
 celery_app = Celery(
@@ -45,19 +148,61 @@ celery_app.conf.update(
 @track_performance
 def process_lead(self, lead_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Process a lead through the LangGraph workflow.
+    Process a lead through Phase 1 enhanced workflow with intent filtering.
+    
+    Only qualifies high-intent leads to optimize resource allocation.
     
     Args:
         lead_data: Dictionary containing lead information
         
     Returns:
-        Dictionary with processing results
+        Dictionary with processing results and intent analysis
     """
     try:
+        # Phase 1: Extract intent data if available (from webhook processing)
+        intent_analysis = lead_data.get('intent_analysis', {})
+        pattern_analysis = lead_data.get('pattern_analysis', {})
+        message = lead_data.get('message', '')
+        
+        # Phase 1: High-intent filtering - only process leads that meet criteria
+        should_qualify = _should_qualify_lead(intent_analysis, pattern_analysis)
+        
+        if not should_qualify['should_qualify']:
+            logger.info(f"Lead {lead_data.get('id', 'unknown')} filtered out: {should_qualify['reason']}")
+            
+            # Still update metrics for filtered leads
+            metrics_collector.increment_counter("leads_filtered")
+            metrics_collector.increment_counter(f"filter_reason_{should_qualify['filter_category']}")
+            
+            return {
+                "success": True,
+                "lead_id": lead_data.get("id"),
+                "status": "filtered",
+                "filter_reason": should_qualify['reason'],
+                "filter_category": should_qualify['filter_category'],
+                "intent_score": intent_analysis.get('intent_score', 0.0),
+                "qualified_score": None,
+                "next_agent": "filtered",
+                "phase_1_filtering": True,
+                "intent_analysis": intent_analysis
+            }
+        
+        logger.info(f"High-intent lead qualified for processing: {should_qualify['reason']}")
+        
+        # Phase 1: Auto-create HubSpot contact for high-intent leads
+        hubspot_contact_id = None
+        if should_qualify.get('create_crm_contact', False):
+            try:
+                hubspot_contact_id = auto_create_high_intent_contact(lead_data, intent_analysis)
+                if hubspot_contact_id:
+                    logger.info(f"Auto-created HubSpot contact: {hubspot_contact_id}")
+            except Exception as e:
+                logger.warning(f"Failed to auto-create HubSpot contact: {e}")
+        
         # Create Lead object
         lead = Lead(**lead_data)
         
-        # Create initial state
+        # Create initial state with Phase 1 enhancements
         initial_state: AgentState = {
             "lead": lead,
             "messages": [
@@ -72,7 +217,13 @@ def process_lead(self, lead_data: Dict[str, Any]) -> Dict[str, Any]:
             "db_results": None,
             "available_slots": None,
             "error_message": None,
-            "retry_count": 0
+            "retry_count": 0,
+            # Phase 1: Enhanced state with intent data
+            "intent_analysis": intent_analysis,
+            "pattern_analysis": pattern_analysis,
+            "high_intent_triggered": should_qualify.get('high_intent_triggered', False),
+            "hubspot_contact_id": hubspot_contact_id,
+            "phase_1_processing": True
         }
         
         # Create workflow
@@ -85,25 +236,36 @@ def process_lead(self, lead_data: Dict[str, Any]) -> Dict[str, Any]:
             }
         }
         
-        # Process through workflow
+        # Process through workflow with enhanced tracking
         result = workflow.invoke(initial_state, config)
         
-        # Store conversation history
-        store_conversation_history(
-            lead.user_id,
-            {
-                "user_message": lead.message,
-                "assistant_messages": [msg for msg in result.get("messages", []) if msg.get("role") == "assistant"],
-                "timestamp": lead.created_at.isoformat(),
-                "status": result["lead"].status,
-                "score": result["lead"].qualified_score
-            }
-        )
+        # Store conversation history with Phase 1 data
+        conversation_data = {
+            "user_message": lead.message,
+            "assistant_messages": [msg for msg in result.get("messages", []) if msg.get("role") == "assistant"],
+            "timestamp": lead.created_at.isoformat(),
+            "status": result["lead"].status,
+            "score": result["lead"].qualified_score,
+            # Phase 1: Store intent and filtering data
+            "intent_analysis": intent_analysis,
+            "high_intent_processed": should_qualify.get('high_intent_triggered', False),
+            "hubspot_contact_created": bool(hubspot_contact_id),
+            "filtering_applied": True
+        }
         
-        # Update metrics
+        store_conversation_history(lead.user_id, conversation_data)
+        
+        # Update metrics with Phase 1 tracking
         metrics_collector.increment_counter("leads_processed")
+        metrics_collector.increment_counter("high_intent_leads_processed")
+        
         if result["lead"].qualified_score:
             metrics_collector.record_score("qualification_score", result["lead"].qualified_score)
+        
+        # Phase 1: Track intent-specific metrics
+        if intent_analysis:
+            metrics_collector.record_score("ai_intent_score", intent_analysis.get('intent_score', 0.0))
+            metrics_collector.increment_counter(f"intent_category_{intent_analysis.get('intent_category', 'unknown')}")
         
         return {
             "success": True,
@@ -111,7 +273,14 @@ def process_lead(self, lead_data: Dict[str, Any]) -> Dict[str, Any]:
             "status": result["lead"].status,
             "qualified_score": result["lead"].qualified_score,
             "next_agent": result.get("next_agent"),
-            "interrupt": result.get("interrupt", False)
+            "interrupt": result.get("interrupt", False),
+            # Phase 1: Enhanced response data
+            "phase_1_processing": True,
+            "intent_analysis": intent_analysis,
+            "high_intent_triggered": should_qualify.get('high_intent_triggered', False),
+            "hubspot_contact_id": hubspot_contact_id,
+            "filtering_reason": should_qualify['reason'],
+            "ai_enhanced": True
         }
         
     except Exception as e:

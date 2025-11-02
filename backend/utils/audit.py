@@ -41,8 +41,9 @@ def _get_settings():
         _settings_cache = _Fallback()
     return _settings_cache
 def _get_supabase_client():
-    from utils.supabase_client import supabase as supabase_client
-    return supabase_client
+    """Get properly initialized Supabase client."""
+    from utils.supabase_client import _ensure_supabase
+    return _ensure_supabase()
 
 
 # Global variable to cache the last hash for chaining

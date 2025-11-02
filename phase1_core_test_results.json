@@ -1,0 +1,192 @@
+{
+  "timestamp": "2025-11-02T19:48:04.213900",
+  "phase": "Phase 1: Core Functionality Tests",
+  "test_suites_run": 4,
+  "successful_suites": 4,
+  "overall_status": "PASSED",
+  "test_results": {
+    "intent_detection": {
+      "test_suite": "intent_detection",
+      "total_tests": 5,
+      "results": [
+        {
+          "test_id": 1,
+          "message": "Hi! I want to book a viewing for a 2BHK apartment ...",
+          "intent_category": "information_request",
+          "intent_score": 0.6,
+          "confidence": 0.6,
+          "pattern_score": 0.1,
+          "immediate_qualification": true,
+          "booking_signals": false,
+          "budget_mentioned": false,
+          "timeline_urgent": false
+        },
+        {
+          "test_id": 2,
+          "message": "Hello, I am looking for condos under $500k in Cali...",
+          "intent_category": "information_request",
+          "intent_score": 0.6,
+          "confidence": 0.6,
+          "pattern_score": 0.0,
+          "immediate_qualification": false,
+          "booking_signals": false,
+          "budget_mentioned": false,
+          "timeline_urgent": false
+        },
+        {
+          "test_id": 3,
+          "message": "urgent - need to move in next week! Looking for an...",
+          "intent_category": "information_request",
+          "intent_score": 0.6,
+          "confidence": 0.6,
+          "pattern_score": 0.05,
+          "immediate_qualification": true,
+          "booking_signals": false,
+          "budget_mentioned": false,
+          "timeline_urgent": false
+        },
+        {
+          "test_id": 4,
+          "message": "Hi there! Beautiful property you have. What can yo...",
+          "intent_category": "information_request",
+          "intent_score": 0.6,
+          "confidence": 0.6,
+          "pattern_score": 0.0,
+          "immediate_qualification": false,
+          "booking_signals": false,
+          "budget_mentioned": false,
+          "timeline_urgent": false
+        },
+        {
+          "test_id": 5,
+          "message": "Hey, nice pics! Cool place....",
+          "intent_category": "information_request",
+          "intent_score": 0.6,
+          "confidence": 0.6,
+          "pattern_score": 0.0,
+          "immediate_qualification": false,
+          "booking_signals": false,
+          "budget_mentioned": false,
+          "timeline_urgent": false
+        }
+      ],
+      "status": "completed"
+    },
+    "high_intent_filtering": {
+      "test_suite": "high_intent_filtering",
+      "total_tests": 3,
+      "results": [
+        {
+          "test_id": 1,
+          "should_qualify": true,
+          "reason": "Intent score: 0.60, Booking: False, Budget: False",
+          "expected_qualify": true,
+          "intent_score": 0.6
+        },
+        {
+          "test_id": 2,
+          "should_qualify": false,
+          "reason": "Intent score: 0.60, Booking: False, Budget: False",
+          "expected_qualify": false,
+          "intent_score": 0.6
+        },
+        {
+          "test_id": 3,
+          "should_qualify": true,
+          "reason": "Intent score: 0.60, Booking: False, Budget: False",
+          "expected_qualify": true,
+          "intent_score": 0.6
+        }
+      ],
+      "status": "completed"
+    },
+    "pattern_classification": {
+      "test_suite": "pattern_classification",
+      "total_tests": 5,
+      "results": [
+        {
+          "test_id": 1,
+          "message": "I want to book a viewing for tomorrow",
+          "pattern_score": 0.05,
+          "immediate_qualification": true,
+          "booking_signals": true,
+          "budget_mentioned": false,
+          "timeline_urgent": true,
+          "property_specific": false
+        },
+        {
+          "test_id": 2,
+          "message": "What's your budget for this property?",
+          "pattern_score": 0.0,
+          "immediate_qualification": false,
+          "booking_signals": false,
+          "budget_mentioned": false,
+          "timeline_urgent": false,
+          "property_specific": false
+        },
+        {
+          "test_id": 3,
+          "message": "Need to move ASAP - urgent!",
+          "pattern_score": 0.05,
+          "immediate_qualification": true,
+          "booking_signals": false,
+          "budget_mentioned": false,
+          "timeline_urgent": true,
+          "property_specific": false
+        },
+        {
+          "test_id": 4,
+          "message": "Nice apartment pics",
+          "pattern_score": 0.0,
+          "immediate_qualification": false,
+          "booking_signals": false,
+          "budget_mentioned": false,
+          "timeline_urgent": false,
+          "property_specific": false
+        },
+        {
+          "test_id": 5,
+          "message": "Looking for 2BHK under $300k",
+          "pattern_score": 0.0,
+          "immediate_qualification": false,
+          "booking_signals": false,
+          "budget_mentioned": false,
+          "timeline_urgent": false,
+          "property_specific": false
+        }
+      ],
+      "status": "completed"
+    },
+    "confidence_scoring": {
+      "test_suite": "confidence_scoring",
+      "total_tests": 3,
+      "results": [
+        {
+          "test_id": 1,
+          "description": "High-intent message with clear signals",
+          "final_confidence": 0.5325,
+          "confidence_level": "medium",
+          "intent_score": 0.6,
+          "intent_category": "information_request"
+        },
+        {
+          "test_id": 2,
+          "description": "Very short message with low intent",
+          "final_confidence": 0.5325,
+          "confidence_level": "medium",
+          "intent_score": 0.6,
+          "intent_category": "information_request"
+        },
+        {
+          "test_id": 3,
+          "description": "Medium-length informational message",
+          "final_confidence": 0.5325,
+          "confidence_level": "medium",
+          "intent_score": 0.6,
+          "intent_category": "information_request"
+        }
+      ],
+      "status": "completed"
+    }
+  }
+}

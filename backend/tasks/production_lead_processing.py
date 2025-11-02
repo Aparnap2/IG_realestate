@@ -21,6 +21,7 @@ from utils.supabase_client import save_or_update_lead, query_properties_db
 from utils.audit import audit_log_event
 from temporal.graph_client import get_graphiti_client
 from utils.llm_client import extract_lead_info, generate_response_message
+from utils.enhanced_llm_extraction import enhanced_extract_lead_info
 from tools.compliance import fair_housing_evaluator
 from utils.redis_client import (
     store_thread_state,
@@ -110,15 +111,30 @@ class ProductionLeadProcessor:
             )
             print("🕒 TEMPORAL KG: Recording message event in Graphiti")
 
-            # Step 2: Extract lead information using LLM
-            print(f"🤖 LLM EXTRACTION: Using OpenRouter to extract structured info")
+            # Step 2: Extract lead information using Enhanced LLM
+            print(f"🤖 ENHANCED LLM EXTRACTION: Using intelligent context-aware extraction")
             try:
-                extracted_info = extract_lead_info(message)
-                if not extracted_info or "error" in extracted_info:
-                    print(f"⚠️ LLM extraction failed, using fallback extraction")
+                # Use enhanced extraction with conversation context
+                extracted_info = enhanced_extract_lead_info(
+                    message=message,
+                    user_id=user_id,
+                    prior_data=prior_lead
+                )
+                
+                # Check extraction quality and confidence
+                extraction_confidence = extracted_info.get("extraction_confidence", 0.0)
+                if extraction_confidence < 0.3 or not extracted_info:
+                    print(f"⚠️ Low confidence extraction ({extraction_confidence:.2f}), using fallback")
                     extracted_info = fallback_extract_lead_info(message)
+                elif "error" in extracted_info:
+                    print(f"⚠️ Enhanced extraction failed, using fallback")
+                    extracted_info = fallback_extract_lead_info(message)
+                else:
+                    print(f"✅ Enhanced extraction successful - Confidence: {extraction_confidence:.2f}")
+                    print(f"   📋 Extracted fields: {[k for k, v in extracted_info.items() if v is not None and k not in ['extraction_confidence', 'extraction_timestamp', 'extraction_method', 'new_information', 'updated_fields', 'conversation_stage']]}")
+                    
             except Exception as e:
-                print(f"⚠️ LLM extraction error: {e}, using fallback extraction")
+                print(f"⚠️ Enhanced LLM extraction error: {e}, using fallback extraction")
                 extracted_info = fallback_extract_lead_info(message)
 
             # Use progressive Q&A: if a current_question exists, prefer mapping this answer
@@ -170,13 +186,14 @@ class ProductionLeadProcessor:
 
             # Step 3: Convert to lead format for database storage
             # Merge with previously known lead data to "remember" prior answers
+            # Ensure safe type conversions for all extracted values
             lead_data = {
                 "instagram_id": user_id,
                 "name": user_name or prior_lead.get("name"),
                 "budget": self._safe_int_convert(extracted_info.get("budget", prior_lead.get("budget", 0))),
-                "location": extracted_info.get("location", prior_lead.get("location", "")),
-                "property_type": extracted_info.get("property_type", prior_lead.get("property_type", "")),
-                "timeline": extracted_info.get("timeline", prior_lead.get("timeline", "")),
+                "location": str(extracted_info.get("location", prior_lead.get("location", ""))) if extracted_info.get("location", prior_lead.get("location")) else "",
+                "property_type": str(extracted_info.get("property_type", prior_lead.get("property_type", ""))) if extracted_info.get("property_type", prior_lead.get("property_type")) else "",
+                "timeline": str(extracted_info.get("timeline", prior_lead.get("timeline", ""))) if extracted_info.get("timeline", prior_lead.get("timeline")) else "",
                 "message": message,
                 "channel": "instagram"
             }
@@ -212,6 +229,19 @@ class ProductionLeadProcessor:
             # Ensure budget is properly converted to int for scoring
             if "budget" in current_lead_data:
                 current_lead_data["budget"] = self._safe_int_convert(current_lead_data["budget"])
+            
+            # Also ensure other fields are properly typed for scoring
+            for field in ["location", "property_type", "timeline"]:
+                if field in current_lead_data and current_lead_data[field] is not None:
+                    current_lead_data[field] = str(current_lead_data[field])
+            
+            # Handle desired_bedrooms for scoring
+            if "desired_bedrooms" in current_lead_data and current_lead_data["desired_bedrooms"] is not None:
+                try:
+                    current_lead_data["desired_bedrooms"] = int(current_lead_data["desired_bedrooms"])
+                except (ValueError, TypeError):
+                    current_lead_data["desired_bedrooms"] = None
+            
             scoring_result = calculate_lead_score(
                 current_lead_data,
                 previous_score=prior_lead.get("qualified_score"),
@@ -300,6 +330,20 @@ class ProductionLeadProcessor:
             # Step 8: Route to next agent per enhanced workflow thresholds
             routing = scoring_result['routing_recommendation']
             next_agent = routing['next_agent']
+            
+            # Handle proactive qualification for underqualified leads
+            proactive_qualification = routing.get('proactive_qualification', False)
+            if proactive_qualification:
+                # Get next qualification question for proactive qualification
+                next_question = get_next_qualification_question(current_lead_data, conv_state.get("asked_questions", []))
+                if next_question:
+                    set_current_question(user_id, next_question['field'])
+                    conv_state["current_question"] = next_question['field']
+                    conv_state["proactive_qualification"] = True
+                    update_conversation_state(user_id, conv_state)
+                    print(f"🎯 PROACTIVE QUALIFICATION: Asking next question to improve score")
+                    print(f"   ❓ Question: {next_question['question']}")
+                    print(f"   🎯 Field: {next_question['field']}")
 
             print(f"🧭 ROUTER: Enhanced routing based on qualification score")
             print(f"   📍 Next agent: {next_agent}")
@@ -581,7 +625,7 @@ class ProductionLeadProcessor:
             return message
         
         # Truncate with smart breaking
-        truncated = message[:INSTAGRAM_LIMIT-10] + "... [truncated]"
+        truncated = message[:INSTAGRAM_LIMIT-20] + "... [truncated]"
         print(f"⚠️ Instagram message truncated: {len(message)} -> {len(truncated)} chars")
         
         return truncated

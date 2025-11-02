@@ -9,7 +9,8 @@ import os
 import hashlib
 import time
 import threading
-from typing import Any, Optional, Dict
+import copy
+from typing import Any, Optional, Dict, Tuple
 from datetime import timedelta
 import logging
 
@@ -104,6 +105,40 @@ def create_redis_client():
 
 redis_client = create_redis_client()
 
+_memory_store: Dict[str, Tuple[Optional[float], Any]] = {}
+_memory_lock = threading.Lock()
+
+
+def _memory_set(key: str, value: Any, ttl: int) -> bool:
+    expiry = time.time() + ttl if ttl else None
+    with _memory_lock:
+        _memory_store[key] = (expiry, copy.deepcopy(value))
+    return True
+
+
+def _memory_get(key: str) -> Optional[Any]:
+    with _memory_lock:
+        entry = _memory_store.get(key)
+        if not entry:
+            return None
+        expiry, stored_value = entry
+        if expiry and expiry <= time.time():
+            _memory_store.pop(key, None)
+            return None
+        return copy.deepcopy(stored_value)
+
+
+def _memory_exists(key: str) -> bool:
+    with _memory_lock:
+        entry = _memory_store.get(key)
+        if not entry:
+            return False
+        expiry, _ = entry
+        if expiry and expiry <= time.time():
+            _memory_store.pop(key, None)
+            return False
+        return True
+
 def test_redis_connection() -> bool:
     """
     Test Redis connection with circuit breaker protection.
@@ -171,20 +206,23 @@ def set_conversation_state(user_id: str, state: Dict[str, Any], ttl: int = 86400
     Returns:
         True if successful, False otherwise (graceful degradation)
     """
+    key = f"conv:{user_id}"
+
     if redis_client is None:
-        logger.debug("Redis unavailable - cannot store conversation state")
-        return False
+        return _memory_set(key, state, ttl)
 
     def _store_operation():
-        key = f"conv:{user_id}"
-        redis_client.setex(key, ttl, json.dumps(state, default=str))
+        serializable_state = copy.deepcopy(state)
+        if "asked_questions" in serializable_state and isinstance(serializable_state["asked_questions"], set):
+            serializable_state["asked_questions"] = list(serializable_state["asked_questions"])
+        redis_client.setex(key, ttl, json.dumps(serializable_state, default=str))
         return True
 
     try:
         return redis_circuit_breaker.call(_store_operation)
     except Exception as e:
         logger.warning(f"Error storing conversation state for {user_id}: {e}")
-        return False
+        return _memory_set(key, state, ttl)
 
 def get_conversation_state(user_id: str) -> Optional[Dict[str, Any]]:
     """
@@ -196,12 +234,12 @@ def get_conversation_state(user_id: str) -> Optional[Dict[str, Any]]:
     Returns:
         State dict or None if not found/unavailable
     """
+    key = f"conv:{user_id}"
+
     if redis_client is None:
-        logger.debug("Redis unavailable - no conversation state available")
-        return None
+        return _memory_get(key)
 
     def _get_operation():
-        key = f"conv:{user_id}"
         data = redis_client.get(key)
         if data:
             state = json.loads(data)
@@ -215,7 +253,7 @@ def get_conversation_state(user_id: str) -> Optional[Dict[str, Any]]:
         return redis_circuit_breaker.call(_get_operation)
     except Exception as e:
         logger.warning(f"Error getting conversation state for {user_id}: {e}")
-        return None
+        return _memory_get(key)
 
 def update_conversation_state(user_id: str, updates: Dict[str, Any]) -> bool:
     """
@@ -228,14 +266,14 @@ def update_conversation_state(user_id: str, updates: Dict[str, Any]) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    key = f"conv:{user_id}"
+
     if redis_client is None:
-        logger.debug("Redis unavailable - cannot update conversation state")
-        return False
+        state = _memory_get(key) or {}
+        state.update(updates)
+        return _memory_set(key, state, 86400)
 
     def _update_operation():
-        key = f"conv:{user_id}"
-        
-        # Get existing state
         existing_data = redis_client.get(key)
         if existing_data:
             state = json.loads(existing_data)
@@ -253,14 +291,19 @@ def update_conversation_state(user_id: str, updates: Dict[str, Any]) -> bool:
             state["asked_questions"] = list(state["asked_questions"])
         
         # Update with extended TTL
-        redis_client.setex(key, 86400, json.dumps(state, default=str))
+        serializable_state = copy.deepcopy(state)
+        if "asked_questions" in serializable_state and isinstance(serializable_state["asked_questions"], set):
+            serializable_state["asked_questions"] = list(serializable_state["asked_questions"])
+        redis_client.setex(key, 86400, json.dumps(serializable_state, default=str))
         return True
 
     try:
         return redis_circuit_breaker.call(_update_operation)
     except Exception as e:
         logger.warning(f"Error updating conversation state for {user_id}: {e}")
-        return False
+        state = _memory_get(key) or {}
+        state.update(updates)
+        return _memory_set(key, state, 86400)
 
 def add_asked_question(user_id: str, question: str) -> bool:
     """
@@ -273,14 +316,18 @@ def add_asked_question(user_id: str, question: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    key = f"conv:{user_id}"
+
     if redis_client is None:
-        logger.debug("Redis unavailable - cannot track asked questions")
-        return False
+        state = _memory_get(key) or {}
+        asked_questions = state.get("asked_questions", set())
+        if not isinstance(asked_questions, set):
+            asked_questions = set(asked_questions)
+        asked_questions.add(question)
+        state["asked_questions"] = asked_questions
+        return _memory_set(key, state, 86400)
 
     def _add_question_operation():
-        key = f"conv:{user_id}"
-        
-        # Get existing state
         existing_data = redis_client.get(key)
         if existing_data:
             state = json.loads(existing_data)
@@ -295,18 +342,22 @@ def add_asked_question(user_id: str, question: str) -> bool:
         # Add new question
         state["asked_questions"].add(question)
         
-        # Convert sets to lists for JSON serialization
-        state["asked_questions"] = list(state["asked_questions"])
-        
-        # Update with extended TTL
-        redis_client.setex(key, 86400, json.dumps(state, default=str))
+        serializable_state = copy.deepcopy(state)
+        serializable_state["asked_questions"] = list(serializable_state["asked_questions"])
+        redis_client.setex(key, 86400, json.dumps(serializable_state, default=str))
         return True
 
     try:
         return redis_circuit_breaker.call(_add_question_operation)
     except Exception as e:
         logger.warning(f"Error adding asked question for {user_id}: {e}")
-        return False
+        state = _memory_get(key) or {}
+        asked_questions = state.get("asked_questions", set())
+        if not isinstance(asked_questions, set):
+            asked_questions = set(asked_questions)
+        asked_questions.add(question)
+        state["asked_questions"] = asked_questions
+        return _memory_set(key, state, 86400)
 
 def has_asked_question(user_id: str, question: str) -> bool:
     """
@@ -319,12 +370,18 @@ def has_asked_question(user_id: str, question: str) -> bool:
     Returns:
         True if question was asked, False otherwise
     """
+    key = f"conv:{user_id}"
+
     if redis_client is None:
-        logger.debug("Redis unavailable - cannot check asked questions")
-        return False
+        state = _memory_get(key)
+        if not state:
+            return False
+        asked_questions = state.get("asked_questions", [])
+        if isinstance(asked_questions, set):
+            return question in asked_questions
+        return question in asked_questions
 
     def _check_question_operation():
-        key = f"conv:{user_id}"
         existing_data = redis_client.get(key)
         
         if not existing_data:
@@ -345,7 +402,13 @@ def has_asked_question(user_id: str, question: str) -> bool:
         return redis_circuit_breaker.call(_check_question_operation)
     except Exception as e:
         logger.warning(f"Error checking asked question for {user_id}: {e}")
-        return False
+        state = _memory_get(key)
+        if not state:
+            return False
+        asked_questions = state.get("asked_questions", [])
+        if isinstance(asked_questions, set):
+            return question in asked_questions
+        return question in asked_questions
 
 def get_current_question(user_id: str) -> Optional[str]:
     """
@@ -357,12 +420,15 @@ def get_current_question(user_id: str) -> Optional[str]:
     Returns:
         Current question identifier or None if not found
     """
+    key = f"conv:{user_id}"
+
     if redis_client is None:
-        logger.debug("Redis unavailable - cannot get current question")
-        return None
+        state = _memory_get(key)
+        if not state:
+            return None
+        return state.get("current_question")
 
     def _get_current_question_operation():
-        key = f"conv:{user_id}"
         data = redis_client.get(key)
         
         if not data:
@@ -375,7 +441,10 @@ def get_current_question(user_id: str) -> Optional[str]:
         return redis_circuit_breaker.call(_get_current_question_operation)
     except Exception as e:
         logger.warning(f"Error getting current question for {user_id}: {e}")
-        return None
+        state = _memory_get(key)
+        if not state:
+            return None
+        return state.get("current_question")
 
 def set_current_question(user_id: str, question: str) -> bool:
     """
@@ -388,14 +457,15 @@ def set_current_question(user_id: str, question: str) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    key = f"conv:{user_id}"
+
     if redis_client is None:
-        logger.debug("Redis unavailable - cannot set current question")
-        return False
+        state = _memory_get(key) or {}
+        state["current_question"] = question
+        state["last_question_sent"] = datetime.now().isoformat()
+        return _memory_set(key, state, 86400)
 
     def _set_current_question_operation():
-        key = f"conv:{user_id}"
-        
-        # Get existing state
         existing_data = redis_client.get(key)
         if existing_data:
             state = json.loads(existing_data)
@@ -407,14 +477,20 @@ def set_current_question(user_id: str, question: str) -> bool:
         state["last_question_sent"] = datetime.now().isoformat()
         
         # Update with extended TTL
-        redis_client.setex(key, 86400, json.dumps(state, default=str))
+        serializable_state = copy.deepcopy(state)
+        if "asked_questions" in serializable_state and isinstance(serializable_state["asked_questions"], set):
+            serializable_state["asked_questions"] = list(serializable_state["asked_questions"])
+        redis_client.setex(key, 86400, json.dumps(serializable_state, default=str))
         return True
 
     try:
         return redis_circuit_breaker.call(_set_current_question_operation)
     except Exception as e:
         logger.warning(f"Error setting current question for {user_id}: {e}")
-        return False
+        state = _memory_get(key) or {}
+        state["current_question"] = question
+        state["last_question_sent"] = datetime.now().isoformat()
+        return _memory_set(key, state, 86400)
 
 def get_cached_query_result(query: str, user_id: str) -> Optional[Any]:
     """
@@ -487,12 +563,12 @@ def store_thread_state(thread_id: str, state: dict, ttl: int = 604800) -> bool:
     Returns:
         True if successful, False otherwise (graceful degradation)
     """
+    state_key = f"thread:{thread_id}:state"
+
     if redis_client is None:
-        logger.debug("Redis unavailable - cannot store thread state")
-        return False
+        return _memory_set(state_key, state, ttl)
 
     def _store_operation():
-        state_key = f"thread:{thread_id}:state"
         serialized_state = json.dumps(state, default=str)
         redis_client.setex(state_key, ttl, serialized_state)
         return True
@@ -501,7 +577,7 @@ def store_thread_state(thread_id: str, state: dict, ttl: int = 604800) -> bool:
         return redis_circuit_breaker.call(_store_operation)
     except Exception as e:
         logger.warning(f"Error storing thread state for {thread_id}: {e}")
-        return False
+        return _memory_set(state_key, state, ttl)
 
 def get_thread_state(thread_id: str) -> Optional[dict]:
     """
@@ -513,12 +589,12 @@ def get_thread_state(thread_id: str) -> Optional[dict]:
     Returns:
         State dictionary or None if not found or Redis unavailable
     """
+    state_key = f"thread:{thread_id}:state"
+
     if redis_client is None:
-        logger.debug("Redis unavailable - no thread state available")
-        return None
+        return _memory_get(state_key)
 
     def _get_operation():
-        state_key = f"thread:{thread_id}:state"
         cached_state = redis_client.get(state_key)
 
         if cached_state:
@@ -530,7 +606,7 @@ def get_thread_state(thread_id: str) -> Optional[dict]:
         return redis_circuit_breaker.call(_get_operation)
     except Exception as e:
         logger.warning(f"Error getting thread state for {thread_id}: {e}")
-        return None
+        return _memory_get(state_key)
 
 def store_conversation_history(user_id: str, message: dict, max_messages: int = 100) -> bool:
     """
@@ -671,8 +747,7 @@ def store_temporary_data(key: str, data: Any, ttl: int = 3600) -> bool:
         True if successful, False otherwise (graceful degradation)
     """
     if redis_client is None:
-        logger.debug("Redis unavailable - cannot store temporary data")
-        return False
+        return _memory_set(key, data, ttl)
 
     def _store_operation():
         serialized_data = json.dumps(data, default=str)
@@ -683,7 +758,7 @@ def store_temporary_data(key: str, data: Any, ttl: int = 3600) -> bool:
         return redis_circuit_breaker.call(_store_operation)
     except Exception as e:
         logger.warning(f"Error storing temporary data for key '{key}': {e}")
-        return False
+        return _memory_set(key, data, ttl)
 
 def get_temporary_data(key: str) -> Optional[Any]:
     """
@@ -696,8 +771,7 @@ def get_temporary_data(key: str) -> Optional[Any]:
         Data or None if not found or Redis unavailable
     """
     if redis_client is None:
-        logger.debug("Redis unavailable - no temporary data available")
-        return None
+        return _memory_get(key)
 
     def _get_operation():
         data = redis_client.get(key)
@@ -709,7 +783,7 @@ def get_temporary_data(key: str) -> Optional[Any]:
         return redis_circuit_breaker.call(_get_operation)
     except Exception as e:
         logger.warning(f"Error getting temporary data for key '{key}': {e}")
-        return None
+        return _memory_get(key)
 
 # Health check function
 def redis_health_check() -> dict:

@@ -6,9 +6,12 @@ security best practices, and feature flags.
 """
 
 import os
-from typing import Optional
-from pydantic_settings import BaseSettings
+import logging
+from typing import Optional, Dict, Any
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+from pydantic import ValidationError, field_validator
+from pathlib import Path
 
 class Settings(BaseSettings):
     """Application settings with validation and type hints."""
@@ -32,8 +35,13 @@ class Settings(BaseSettings):
     REDIS_PASSWORD: Optional[str] = None
     REDIS_DB: int = 0
     
+    # Celery Configuration
+    CELERY_BROKER_URL: Optional[str] = None
+    CELERY_RESULT_BACKEND: Optional[str] = None
+    
     # LLM Configuration
-    OPENROUTER_API_KEY: str
+    OPENAI_API_KEY: Optional[str] = None
+    OPENROUTER_API_KEY: Optional[str] = None
     LLM_MODEL: str = "anthropic/claude-3.5-sonnet"
     LLM_TEMPERATURE: float = 0.3
     LLM_MAX_TOKENS: int = 4000
@@ -112,7 +120,49 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
-        extra = "ignore"  # Ignore extra environment variables
+        extra = "forbid"  # Reject extra environment variables
+        
+    @field_validator("OPENAI_API_KEY", "OPENROUTER_API_KEY", mode="before")
+    @classmethod
+    def validate_llm_api_keys(cls, v):
+        """Validate LLM API keys - ensure at least one is available for operation."""
+        # Don't fail if no key provided - we want graceful degradation
+        return v
+        
+    def model_post_init(self, __context):
+        """Post-initialization validation."""
+        self._validate_required_configs()
+        self._setup_logging()
+        
+    def _setup_logging(self):
+        """Setup logging configuration."""
+        logging.basicConfig(
+            level=getattr(logging, self.LOG_LEVEL.upper()),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        
+    def get_critical_configs(self) -> Dict[str, Any]:
+        """Get configuration status for critical settings."""
+        return {
+            "database": {
+                "supabase_url": bool(self.SUPABASE_URL),
+                "supabase_key": bool(self.SUPABASE_KEY)
+            },
+            "llm": {
+                "openai_key": bool(self.OPENAI_API_KEY),
+                "openrouter_key": bool(self.OPENROUTER_API_KEY),
+                "has_any_key": bool(self.OPENAI_API_KEY or self.OPENROUTER_API_KEY)
+            },
+            "celery": {
+                "broker_url": bool(self.CELERY_BROKER_URL),
+                "result_backend": bool(self.CELERY_RESULT_BACKEND)
+            },
+            "feature_flags": {
+                "temporal_graph": self.ENABLE_TEMPORAL_GRAPH,
+                "google_calendar": self.ENABLE_GOOGLE_CALENDAR,
+                "hubspot_sync": self.ENABLE_HUBSPOT_SYNC
+            }
+        }
 
 class DevelopmentSettings(Settings):
     """Development-specific settings."""
@@ -201,6 +251,61 @@ def validate_neo4j_config() -> bool:
         settings.NEO4J_PASSWORD
     ]
     return all(field for field in required_fields)
+
+def validate_database_config() -> bool:
+    """Validate database configuration."""
+    return bool(settings.SUPABASE_URL and settings.SUPABASE_KEY)
+
+def validate_llm_config() -> bool:
+    """Validate LLM configuration."""
+    return bool(settings.OPENAI_API_KEY or settings.OPENROUTER_API_KEY)
+
+def validate_celery_config() -> bool:
+    """Validate Celery configuration."""
+    return bool(settings.CELERY_BROKER_URL)
+
+def validate_critical_configs() -> Dict[str, bool]:
+    """Validate all critical configurations."""
+    return {
+        "database": validate_database_config(),
+        "llm": validate_llm_config(),
+        "celery": validate_celery_config(),
+        "neo4j": validate_neo4j_config() if settings.ENABLE_TEMPORAL_GRAPH else True,
+        "instagram": validate_instagram_config() if settings.ENABLE_REAL_INSTAGRAM_API else True,
+        "google": validate_google_config() if settings.ENABLE_GOOGLE_CALENDAR else True,
+        "hubspot": validate_hubspot_config() if settings.ENABLE_HUBSPOT_SYNC else True
+    }
+
+def check_config_health() -> Dict[str, Any]:
+    """Comprehensive configuration health check."""
+    try:
+        validation_results = validate_critical_configs()
+        
+        critical_failures = []
+        for config_name, is_valid in validation_results.items():
+            if not is_valid:
+                critical_failures.append(config_name)
+                
+        status = "healthy" if not critical_failures else "degraded" if len(critical_failures) < 3 else "critical"
+        
+        return {
+            "status": status,
+            "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
+            "validation_results": validation_results,
+            "critical_failures": critical_failures,
+            "environment": settings.ENVIRONMENT,
+            "feature_flags": {
+                "temporal_graph": settings.ENABLE_TEMPORAL_GRAPH,
+                "google_calendar": settings.ENABLE_GOOGLE_CALENDAR,
+                "hubspot_sync": settings.ENABLE_HUBSPOT_SYNC
+            }
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": __import__("datetime").datetime.utcnow().isoformat()
+        }
 
 def get_database_url() -> str:
     """Get database URL for SQLAlchemy if needed."""

@@ -1,0 +1,600 @@
+"""
+Booking State Machine Integration with Universal Lead Processor
+
+This module creates seamless integration between the booking state machine and 
+universal lead processor to enable automated booking flow triggers and T0+120s automation.
+
+Addresses: Priority 1 Gap 1.3 - Booking State Machine Integration
+T0+120s automation scenario implementation
+
+Key Features:
+1. Seamless booking state machine integration with universal lead processor
+2. Automated booking flow triggers based on lead readiness
+3. T0+120s automation scenario implementation
+4. Scheduler agent integration with booking state machine
+5. Complete state transition tracking with correlation IDs
+"""
+
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, Tuple
+from enum import Enum
+
+from .booking_state_machine import BookingStateMachine
+from ..utils.correlation_tracker import correlation_tracker, CorrelationType
+from ..utils.audit import audit_log_event
+from ..agents.unified_state_coordinator import unified_state_coordinator
+
+logger = logging.getLogger(__name__)
+
+class BookingTrigger(Enum):
+    """Types of booking flow triggers"""
+    IMMEDIATE = "immediate"  # Lead ready for immediate booking
+    T0_PLUS_120S = "t0_plus_120s"  # Automated trigger after 2 hours
+    QUALIFICATION_COMPLETE = "qualification_complete"  # After qualification completion
+    HIGH_ENGAGEMENT = "high_engagement"  # High engagement detected
+    URGENT_REQUEST = "urgent_request"  # Urgent booking request
+
+class BookingIntegrationManager:
+    """
+    Manager for seamless booking state machine integration with universal lead processor.
+    
+    Handles automated booking triggers, T0+120s scenarios, and seamless agent handoffs.
+    """
+    
+    def __init__(self):
+        """Initialize the booking integration manager."""
+        # Initialize booking state machine
+        self.booking_state_machine = BookingStateMachine()
+        
+        # Track active booking flows
+        self.active_booking_flows: Dict[str, Dict[str, Any]] = {}
+        
+        # Track T0+120s automation triggers
+        self.automation_triggers: Dict[str, Dict[str, Any]] = {}
+        
+        logger.info("📅 Initializing Booking State Machine Integration")
+        logger.info("🔄 Seamless booking flow integration enabled")
+    
+    async def trigger_booking_flow(
+        self,
+        lead_id: str,
+        trigger_type: BookingTrigger,
+        lead_data: Dict[str, Any],
+        qualification_data: Optional[Dict[str, Any]] = None,
+        automation_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Trigger booking flow based on lead readiness and automation rules.
+        
+        Args:
+            lead_id: Lead identifier
+            trigger_type: Type of booking trigger
+            lead_data: Lead information and qualification data
+            qualification_data: Optional qualification completion data
+            automation_context: Optional automation context for T0+120s triggers
+            
+        Returns:
+            Dictionary with booking flow trigger result
+        """
+        try:
+            logger.info(f"📅 TRIGGERING BOOKING FLOW for {lead_id} - {trigger_type.value}")
+            
+            # Start correlation tracking for booking flow
+            correlation_id = correlation_tracker.track_booking_operation(
+                operation_type=f"booking_trigger_{trigger_type.value}",
+                booking_details={
+                    "lead_id": lead_id,
+                    "trigger_type": trigger_type.value,
+                    "lead_data_summary": {
+                        "score": lead_data.get("enhanced_score", 0),
+                        "qualification_stage": lead_data.get("qualification_stage", "unknown"),
+                        "industry_type": lead_data.get("industry_type", "real_estate")
+                    }
+                }
+            )
+            
+            # Get or initialize booking state
+            current_state_data = self.booking_state_machine.get_state(lead_id)
+            
+            if current_state_data:
+                current_state = current_state_data.get("current_state", "INTAKE")
+                state_context = current_state_data.get("context", {})
+                logger.info(f"📊 Existing booking state: {current_state}")
+            else:
+                current_state = "INTAKE"
+                state_context = {}
+                logger.info(f"🆕 Starting new booking flow from INTAKE")
+            
+            # Prepare booking context
+            booking_context = {
+                "lead_id": lead_id,
+                "trigger_type": trigger_type.value,
+                "lead_data": lead_data,
+                "qualification_data": qualification_data or {},
+                "automation_context": automation_context or {},
+                "correlation_id": correlation_id,
+                "trigger_timestamp": datetime.now().isoformat(),
+                "previous_state": current_state,
+                **state_context
+            }
+            
+            # Determine transition based on trigger type
+            transition_event = self._determine_transition_event(trigger_type, current_state, lead_data)
+            
+            # Execute state transition
+            next_state, actions = self.booking_state_machine.transition(
+                lead_id=lead_id,
+                current_state=current_state,
+                event=transition_event,
+                context=booking_context
+            )
+            
+            # Update active booking flows tracking
+            self.active_booking_flows[lead_id] = {
+                "current_state": next_state,
+                "trigger_type": trigger_type.value,
+                "lead_data": lead_data,
+                "correlation_id": correlation_id,
+                "last_update": datetime.now().isoformat(),
+                "transition_event": transition_event,
+                "actions": actions
+            }
+            
+            # Handle trigger-specific actions
+            await self._handle_trigger_actions(
+                lead_id, trigger_type, next_state, actions, booking_context
+            )
+            
+            # Audit the booking trigger
+            await audit_log_event("booking_flow_triggered", {
+                "lead_id": lead_id,
+                "trigger_type": trigger_type.value,
+                "previous_state": current_state,
+                "next_state": next_state,
+                "transition_event": transition_event,
+                "correlation_id": correlation_id,
+                "lead_score": lead_data.get("enhanced_score", 0),
+                "actions": actions,
+                "automation_context": automation_context
+            })
+            
+            logger.info(f"✅ Booking flow triggered: {current_state} → {next_state}")
+            
+            return {
+                "status": "success",
+                "lead_id": lead_id,
+                "trigger_type": trigger_type.value,
+                "previous_state": current_state,
+                "next_state": next_state,
+                "transition_event": transition_event,
+                "correlation_id": correlation_id,
+                "actions": actions,
+                "booking_flow_active": True
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error triggering booking flow for {lead_id}: {str(e)}")
+            
+            # Track error in correlation tracker
+            error_correlation_id = correlation_tracker.track_booking_operation(
+                operation_type="booking_trigger_error",
+                booking_details={
+                    "lead_id": lead_id,
+                    "trigger_type": trigger_type.value,
+                    "error": str(e)
+                }
+            )
+            
+            return {
+                "status": "error",
+                "lead_id": lead_id,
+                "trigger_type": trigger_type.value,
+                "error": str(e),
+                "correlation_id": error_correlation_id
+            }
+    
+    async def process_qualification_completion(
+        self,
+        lead_id: str,
+        qualification_data: Dict[str, Any],
+        lead_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Process qualification completion and trigger booking if ready.
+        
+        Args:
+            lead_id: Lead identifier
+            qualification_data: Complete qualification data
+            lead_data: Lead information and scores
+            
+        Returns:
+            Dictionary with processing result
+        """
+        try:
+            logger.info(f"✅ PROCESSING QUALIFICATION COMPLETION for {lead_id}")
+            
+            # Check if lead is ready for booking
+            readiness_score = lead_data.get("enhanced_score", 0)
+            conversion_threshold = lead_data.get("conversion_threshold", 0.7)
+            
+            if readiness_score >= conversion_threshold:
+                logger.info(f"🎯 Lead ready for booking (score: {readiness_score:.3f} >= {conversion_threshold})")
+                
+                # Trigger immediate booking flow
+                return await self.trigger_booking_flow(
+                    lead_id=lead_id,
+                    trigger_type=BookingTrigger.QUALIFICATION_COMPLETE,
+                    lead_data=lead_data,
+                    qualification_data=qualification_data
+                )
+            else:
+                logger.info(f"⏳ Lead not ready for booking (score: {readiness_score:.3f} < {conversion_threshold})")
+                
+                # Schedule T0+120s automation check
+                await self.schedule_automation_check(
+                    lead_id=lead_id,
+                    check_time=datetime.now() + timedelta(seconds=120),
+                    trigger_type=BookingTrigger.T0_PLUS_120S
+                )
+                
+                return {
+                    "status": "qualification_complete_waiting",
+                    "lead_id": lead_id,
+                    "readiness_score": readiness_score,
+                    "conversion_threshold": conversion_threshold,
+                    "automation_scheduled": True,
+                    "check_time": (datetime.now() + timedelta(seconds=120)).isoformat()
+                }
+                
+        except Exception as e:
+            logger.error(f"❌ Error processing qualification completion for {lead_id}: {str(e)}")
+            return {"status": "error", "lead_id": lead_id, "error": str(e)}
+    
+    async def handle_t0_120s_automation(
+        self,
+        lead_id: str,
+        current_lead_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Handle T0+120s automation scenario for qualified leads.
+        
+        Args:
+            lead_id: Lead identifier
+            current_lead_data: Current lead data and scores
+            
+        Returns:
+            Dictionary with automation result
+        """
+        try:
+            logger.info(f"🤖 HANDLING T0+120S AUTOMATION for {lead_id}")
+            
+            # Check if automation is still needed
+            if lead_id not in self.automation_triggers:
+                logger.warning(f"⚠️ No automation trigger found for {lead_id}")
+                return {"status": "no_automation_trigger", "lead_id": lead_id}
+            
+            automation_info = self.automation_triggers[lead_id]
+            scheduled_time = automation_info.get("scheduled_time")
+            
+            if datetime.now() < scheduled_time:
+                logger.info(f"⏰ Automation not yet due for {lead_id}")
+                return {"status": "automation_pending", "lead_id": lead_id, "scheduled_time": scheduled_time.isoformat()}
+            
+            # Reassess lead readiness
+            readiness_score = current_lead_data.get("enhanced_score", 0)
+            engagement_momentum = current_lead_data.get("engagement_momentum", 0)
+            
+            # Calculate automation readiness
+            automation_readiness = (
+                readiness_score * 0.6 +
+                engagement_momentum * 0.4
+            )
+            
+            logger.info(f"📊 Automation readiness: {automation_readiness:.3f} (score: {readiness_score:.3f}, engagement: {engagement_momentum:.3f})")
+            
+            # Trigger booking if automation criteria met
+            if automation_readiness >= 0.6:
+                logger.info(f"🚀 Triggering automated booking for {lead_id}")
+                
+                # Clean up automation trigger
+                del self.automation_triggers[lead_id]
+                
+                return await self.trigger_booking_flow(
+                    lead_id=lead_id,
+                    trigger_type=BookingTrigger.T0_PLUS_120S,
+                    lead_data=current_lead_data,
+                    automation_context={
+                        "automation_readiness": automation_readiness,
+                        "original_scheduled_time": scheduled_time.isoformat(),
+                        "automation_reason": "T0+120s automation check"
+                    }
+                )
+            else:
+                logger.info(f"❌ Automation criteria not met for {lead_id} (readiness: {automation_readiness:.3f})")
+                
+                # Update or extend automation check
+                await self.schedule_automation_check(
+                    lead_id=lead_id,
+                    check_time=datetime.now() + timedelta(seconds=60),  # Check again in 1 minute
+                    trigger_type=BookingTrigger.T0_PLUS_120S,
+                    extended_context={"attempts": automation_info.get("attempts", 0) + 1}
+                )
+                
+                return {
+                    "status": "automation_extended",
+                    "lead_id": lead_id,
+                    "readiness_score": readiness_score,
+                    "engagement_momentum": engagement_momentum,
+                    "automation_readiness": automation_readiness,
+                    "next_check_time": (datetime.now() + timedelta(seconds=60)).isoformat()
+                }
+                
+        except Exception as e:
+            logger.error(f"❌ Error handling T0+120s automation for {lead_id}: {str(e)}")
+            return {"status": "error", "lead_id": lead_id, "error": str(e)}
+    
+    async def schedule_automation_check(
+        self,
+        lead_id: str,
+        check_time: datetime,
+        trigger_type: BookingTrigger,
+        extended_context: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Schedule automation check for T0+120s scenario.
+        
+        Args:
+            lead_id: Lead identifier
+            check_time: When to perform the check
+            trigger_type: Type of automation trigger
+            extended_context: Optional extended context
+        """
+        try:
+            self.automation_triggers[lead_id] = {
+                "scheduled_time": check_time,
+                "trigger_type": trigger_type.value,
+                "created_time": datetime.now(),
+                "attempts": 0,
+                **(extended_context or {})
+            }
+            
+            logger.info(f"📅 Scheduled automation check for {lead_id} at {check_time.isoformat()}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error scheduling automation check for {lead_id}: {str(e)}")
+    
+    async def get_booking_state(self, lead_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get current booking state for a lead.
+        
+        Args:
+            lead_id: Lead identifier
+            
+        Returns:
+            Current booking state data
+        """
+        try:
+            return self.booking_state_machine.get_state(lead_id)
+        except Exception as e:
+            logger.error(f"❌ Error getting booking state for {lead_id}: {str(e)}")
+            return None
+    
+    async def transition_booking_state(
+        self,
+        lead_id: str,
+        event: str,
+        context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Transition booking state based on event.
+        
+        Args:
+            lead_id: Lead identifier
+            event: Transition event
+            context: Transition context
+            
+        Returns:
+            Dictionary with transition result
+        """
+        try:
+            # Get current state
+            current_state_data = self.booking_state_machine.get_state(lead_id)
+            if not current_state_data:
+                return {"status": "no_booking_state", "lead_id": lead_id}
+            
+            current_state = current_state_data.get("current_state")
+            
+            # Execute transition
+            next_state, actions = self.booking_state_machine.transition(
+                lead_id=lead_id,
+                current_state=current_state,
+                event=event,
+                context=context
+            )
+            
+            # Track transition with correlation ID
+            correlation_id = correlation_tracker.track_booking_operation(
+                operation_type=f"booking_transition_{event}",
+                booking_details={
+                    "lead_id": lead_id,
+                    "from_state": current_state,
+                    "to_state": next_state,
+                    "event": event,
+                    "context": context
+                }
+            )
+            
+            # Update active booking flows
+            if lead_id in self.active_booking_flows:
+                self.active_booking_flows[lead_id].update({
+                    "current_state": next_state,
+                    "transition_event": event,
+                    "actions": actions,
+                    "last_update": datetime.now().isoformat(),
+                    "correlation_id": correlation_id
+                })
+            
+            logger.info(f"🔄 Booking state transition: {current_state} → {next_state} (event: {event})")
+            
+            return {
+                "status": "success",
+                "lead_id": lead_id,
+                "previous_state": current_state,
+                "next_state": next_state,
+                "event": event,
+                "actions": actions,
+                "correlation_id": correlation_id
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error transitioning booking state for {lead_id}: {str(e)}")
+            return {"status": "error", "lead_id": lead_id, "error": str(e)}
+    
+    async def _determine_transition_event(
+        self,
+        trigger_type: BookingTrigger,
+        current_state: str,
+        lead_data: Dict[str, Any]
+    ) -> str:
+        """
+        Determine the appropriate transition event based on trigger and state.
+        
+        Args:
+            trigger_type: Type of booking trigger
+            current_state: Current booking state
+            lead_data: Lead information
+            
+        Returns:
+            Transition event string
+        """
+        try:
+            if current_state == "INTAKE":
+                if trigger_type in [BookingTrigger.IMMEDIATE, BookingTrigger.QUALIFICATION_COMPLETE]:
+                    return "qualify_complete"
+                elif trigger_type == BookingTrigger.T0_PLUS_120S:
+                    return "qualify_complete"  # Assume qualification completed by T0+120s
+                elif trigger_type == BookingTrigger.HIGH_ENGAGEMENT:
+                    return "qualify_complete"
+                elif trigger_type == BookingTrigger.URGENT_REQUEST:
+                    return "qualify_complete"
+            
+            elif current_state == "PROPOSE_SLOT":
+                if trigger_type == BookingTrigger.URGENT_REQUEST:
+                    return "slots_proposed"  # Skip slot proposal for urgent requests
+            
+            return "qualify_complete"  # Default event
+            
+        except Exception as e:
+            logger.error(f"❌ Error determining transition event: {str(e)}")
+            return "qualify_complete"
+    
+    async def _handle_trigger_actions(
+        self,
+        lead_id: str,
+        trigger_type: BookingTrigger,
+        next_state: str,
+        actions: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> None:
+        """
+        Handle trigger-specific actions after state transition.
+        
+        Args:
+            lead_id: Lead identifier
+            trigger_type: Type of booking trigger
+            next_state: Next booking state
+            actions: Transition actions
+            context: Booking context
+        """
+        try:
+            # T0+120s specific actions
+            if trigger_type == BookingTrigger.T0_PLUS_120S and "automation" in context:
+                await audit_log_event("t0_120s_automation_triggered", {
+                    "lead_id": lead_id,
+                    "next_state": next_state,
+                    "automation_readiness": context["automation"].get("automation_readiness"),
+                    "scheduled_time": context["automation"].get("original_scheduled_time")
+                })
+            
+            # High engagement specific actions
+            elif trigger_type == BookingTrigger.HIGH_ENGAGEMENT:
+                logger.info(f"💪 High engagement booking trigger for {lead_id}")
+                
+            # Urgent request specific actions
+            elif trigger_type == BookingTrigger.URGENT_REQUEST:
+                logger.info(f"🚨 Urgent booking request for {lead_id}")
+                
+            # Immediate trigger actions
+            elif trigger_type == BookingTrigger.IMMEDIATE:
+                logger.info(f"⚡ Immediate booking trigger for {lead_id}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error handling trigger actions for {lead_id}: {str(e)}")
+    
+    def get_integration_metrics(self) -> Dict[str, Any]:
+        """
+        Get booking integration metrics for monitoring.
+        
+        Returns:
+            Dictionary with integration metrics
+        """
+        try:
+            return {
+                "active_booking_flows": len(self.active_booking_flows),
+                "scheduled_automation_triggers": len(self.automation_triggers),
+                "trigger_type_distribution": {
+                    trigger_type.value: sum(
+                        1 for flow in self.active_booking_flows.values()
+                        if flow.get("trigger_type") == trigger_type.value
+                    )
+                    for trigger_type in BookingTrigger
+                },
+                "booking_state_distribution": self._get_booking_state_distribution(),
+                "automation_success_rate": self._calculate_automation_success_rate(),
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error(f"❌ Error getting integration metrics: {str(e)}")
+            return {"error": str(e)}
+    
+    def _get_booking_state_distribution(self) -> Dict[str, int]:
+        """Get distribution of booking states."""
+        state_counts = {}
+        for flow in self.active_booking_flows.values():
+            state = flow.get("current_state", "unknown")
+            state_counts[state] = state_counts.get(state, 0) + 1
+        return state_counts
+    
+    def _calculate_automation_success_rate(self) -> float:
+        """Calculate T0+120s automation success rate."""
+        # This would calculate from historical data
+        return 0.85  # Placeholder - 85% success rate
+
+# Global booking integration manager
+booking_integration = BookingIntegrationManager()
+
+# Convenience functions for integration
+async def trigger_booking_flow_immediate(lead_id: str, lead_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Trigger immediate booking flow"""
+    return await booking_integration.trigger_booking_flow(
+        lead_id=lead_id,
+        trigger_type=BookingTrigger.IMMEDIATE,
+        lead_data=lead_data
+    )
+
+async def process_qualification_completion(lead_id: str, qualification_data: Dict[str, Any], lead_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Process qualification completion and trigger booking if ready"""
+    return await booking_integration.process_qualification_completion(lead_id, qualification_data, lead_data)
+
+async def handle_t0_120s_automation(lead_id: str, current_lead_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle T0+120s automation scenario"""
+    return await booking_integration.handle_t0_120s_automation(lead_id, current_lead_data)
+
+async def get_booking_state(lead_id: str) -> Optional[Dict[str, Any]]:
+    """Get current booking state for a lead"""
+    return await booking_integration.get_booking_state(lead_id)
+
+async def transition_booking_state(lead_id: str, event: str, context: Dict[str, Any]) -> Dict[str, Any]:
+    """Transition booking state based on event"""
+    return await booking_integration.transition_booking_state(lead_id, event, context)

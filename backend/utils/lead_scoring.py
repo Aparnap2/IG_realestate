@@ -18,6 +18,7 @@ import re
 import logging
 
 from .response_tracker import ResponseTimeTracker
+from .enhanced_llm_extraction import LangGraphIntentClassifier, ClassificationResult
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,9 @@ class LeadScoringSystem:
         # Initialize response time tracker
         self.response_tracker = ResponseTimeTracker()
         
+        # Initialize AI-powered intent classifier
+        self.intent_classifier = LangGraphIntentClassifier()
+        
         # Original scoring weights (for backward compatibility)
         self.scoring_weights = {
             'budget': 0.25,        # Budget clarity and amount
@@ -76,14 +80,17 @@ class LeadScoringSystem:
             'timeline': 0.15,       # Timeline urgency
             'property_type': 0.10,   # Property preferences
             'completeness': 0.15,    # Information completeness
-            'engagement': 0.15       # Engagement level
+            'engagement': 0.15,      # Engagement level
+            # Phase 1: Intent detection weight
+            'intent_score': 0.20     # AI-detected intent level
         }
         
-        # Enhanced scoring weights
+        # Enhanced scoring weights with Phase 1 intent analysis
         self.enhanced_scoring_weights = {
-            'base_score': 0.6,       # Existing scoring 60%
-            'urgency_score': 0.2,    # Response time 20%
-            'engagement_momentum': 0.2  # Engagement momentum 20%
+            'base_score': 0.5,       # Existing scoring 50%
+            'intent_score': 0.25,    # AI intent analysis 25%
+            'urgency_score': 0.15,   # Response time 15%
+            'engagement_momentum': 0.1  # Engagement momentum 10%
         }
         
         self.budget_tiers = {
@@ -102,6 +109,78 @@ class LeadScoringSystem:
             'future': (12, 0.2)           # 12+ months
         }
     
+    def analyze_intent_with_ai(self, message: str) -> Dict[str, Any]:
+        """
+        Use AI-powered intent analysis to enhance lead scoring.
+        
+        Args:
+            message: The message text to analyze
+            
+        Returns:
+            Dictionary with AI intent analysis results
+        """
+        try:
+            classification_result = self.intent_classifier.classify_message(message)
+            
+            return {
+                'intent_category': classification_result.intent_category,
+                'intent_score': classification_result.intent_score,
+                'confidence': classification_result.confidence,
+                'high_intent_indicators': classification_result.high_intent_indicators,
+                'budget_mentioned': classification_result.budget_mentioned,
+                'timeline_urgent': classification_result.timeline_urgent,
+                'booking_signals': classification_result.booking_signals,
+                'extraction_priority': classification_result.extraction_priority,
+                'message_type': classification_result.message_type.value,
+                'ai_analysis_success': True,
+                'intent_level_raw': classification_result.intent_level
+            }
+        except Exception as e:
+            logger.warning(f"AI intent analysis failed: {e}")
+            return {
+                'intent_category': 'analysis_failed',
+                'intent_score': 0.5,  # Default medium score
+                'confidence': 0.3,
+                'high_intent_indicators': [],
+                'budget_mentioned': False,
+                'timeline_urgent': False,
+                'booking_signals': False,
+                'extraction_priority': 'low',
+                'message_type': 'unknown',
+                'ai_analysis_success': False,
+                'intent_level_raw': 0.5,
+                'error': str(e)
+            }
+    
+    def calculate_intent_score(self, intent_analysis: Dict[str, Any]) -> float:
+        """
+        Calculate intent score component from AI analysis.
+        
+        Args:
+            intent_analysis: Results from analyze_intent_with_ai()
+            
+        Returns:
+            Intent score (0.0 to 1.0)
+        """
+        base_score = intent_analysis.get('intent_score', 0.5)
+        confidence = intent_analysis.get('confidence', 0.5)
+        
+        # Boost score for high-confidence detections
+        confidence_boost = confidence * 0.1  # Max 10% boost
+        
+        # Additional boosts for specific high-intent signals
+        boost = 0.0
+        if intent_analysis.get('budget_mentioned'):
+            boost += 0.15  # Budget mentions are strong signals
+        if intent_analysis.get('booking_signals'):
+            boost += 0.2   # Booking signals are very strong
+        if intent_analysis.get('timeline_urgent'):
+            boost += 0.1   # Urgency adds weight
+            
+        # Calculate final intent score
+        final_score = min(base_score + confidence_boost + boost, 1.0)
+        return round(final_score, 3)
+    
     def calculate_lead_score(
         self,
         budget: Optional[int] = None,
@@ -113,10 +192,11 @@ class LeadScoringSystem:
         name: Optional[str] = None,
         message: Optional[str] = None,
         previous_score: Optional[float] = None,
-        conversation_history: Optional[List[Dict[str, Any]]] = None
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        use_ai_intent: bool = True  # Phase 1: Enable AI intent analysis
     ) -> Dict[str, Any]:
         """
-        Calculate comprehensive lead score with detailed breakdown.
+        Calculate comprehensive lead score with Phase 1 AI-powered intent detection.
         
         Args:
             budget: Lead's budget in USD
@@ -129,37 +209,43 @@ class LeadScoringSystem:
             message: Original message content
             previous_score: Previous qualification score
             conversation_history: Previous conversation messages
+            use_ai_intent: Whether to use AI-powered intent analysis (Phase 1)
             
         Returns:
-            Dictionary with score, breakdown, and routing recommendation
+            Dictionary with score, breakdown, routing recommendation, and AI intent data
         """
         try:
+            # Phase 1: AI-powered intent analysis
+            intent_analysis = {}
+            intent_score_component = 0.0
+            
+            if use_ai_intent and message:
+                intent_analysis = self.analyze_intent_with_ai(message)
+                intent_score_component = self.calculate_intent_score(intent_analysis)
+                
+                logger.info(f"AI Intent Analysis: {intent_analysis['intent_category']} "
+                          f"(score: {intent_score_component:.3f}, "
+                          f"confidence: {intent_analysis['confidence']:.3f})")
+            
             # Initialize scoring components
             scores = {}
             
-            # Budget scoring (0-1)
+            # Traditional scoring components
             scores['budget'] = self._score_budget(budget)
-            
-            # Location scoring (0-1)
             scores['location'] = self._score_location(location)
-            
-            # Timeline scoring (0-1)
             scores['timeline'] = self._score_timeline(timeline)
-            
-            # Property type scoring (0-1)
             scores['property_type'] = self._score_property_type(property_type, desired_bedrooms)
-            
-            # Information completeness scoring (0-1)
             scores['completeness'] = self._score_completeness(
                 budget, location, timeline, property_type, email, name
             )
-            
-            # Engagement scoring (0-1)
             scores['engagement'] = self._score_engagement(
                 message, conversation_history, previous_score
             )
             
-            # Calculate weighted final score
+            # Phase 1: Add AI intent scoring component
+            scores['intent_score'] = intent_score_component
+            
+            # Calculate weighted final score with intent component
             final_score = sum(
                 scores[component] * self.scoring_weights[component]
                 for component in self.scoring_weights
@@ -174,8 +260,8 @@ class LeadScoringSystem:
                 except (ValueError, TypeError):
                     score_delta = None
             
-            # Determine routing recommendation
-            routing = self._determine_routing(final_score)
+            # Determine routing recommendation with AI-enhanced logic
+            routing = self._determine_routing_with_ai(final_score, intent_analysis)
             
             # Determine qualification stage
             qualification_stage = self._determine_qualification_stage(final_score)
@@ -187,14 +273,27 @@ class LeadScoringSystem:
                 'routing_recommendation': routing,
                 'qualification_stage': qualification_stage,
                 'scoring_timestamp': datetime.now().isoformat(),
+                # Phase 1: AI Intent Analysis Results
+                'ai_intent_analysis': intent_analysis,
+                'intent_score_component': intent_score_component,
+                'phase_1_features': {
+                    'ai_intent_detection': use_ai_intent and bool(message),
+                    'intent_category': intent_analysis.get('intent_category', 'not_analyzed'),
+                    'high_intent_signals': intent_analysis.get('high_intent_indicators', []),
+                    'ai_confidence': intent_analysis.get('confidence', 0.0)
+                },
                 'thresholds': {
                     'scheduler_threshold': 0.75,
                     'followup_threshold': 0.4,
-                    'offramp_threshold': 0.4
+                    'offramp_threshold': 0.4,
+                    # Phase 1: Intent-based thresholds
+                    'high_intent_threshold': 0.75,
+                    'ai_intent_threshold': 0.7
                 }
             }
             
-            logger.info(f"Lead score calculated: {final_score:.3f} -> {routing['next_agent']}")
+            logger.info(f"Enhanced lead score calculated: {final_score:.3f} -> {routing['next_agent']} "
+                       f"(AI intent: {intent_analysis.get('intent_category', 'N/A')})")
             return result
             
         except Exception as e:
@@ -210,17 +309,46 @@ class LeadScoringSystem:
                 'error': str(e)
             }
     
-    def _score_budget(self, budget: Optional[int]) -> float:
-        """Score budget based on amount and clarity."""
-        if not budget or budget <= 0:
-            return 0.0  # No budget provided
-        
-        # Find appropriate tier
-        for tier_name, (min_budget, score) in self.budget_tiers.items():
-            if budget >= min_budget:
-                return score
-        
-        return 0.1  # Below lowest tier
+    def _score_budget(self, budget) -> float:
+        """Score budget based on amount and clarity with robust type handling."""
+        try:
+            # Handle None, empty, or invalid values
+            if not budget:
+                return 0.0  # No budget provided
+            
+            # Convert to int safely, handling string inputs
+            if isinstance(budget, str):
+                # Remove currency symbols and whitespace, handle common formats
+                cleaned = budget.replace('$', '').replace(',', '').strip()
+                if not cleaned or cleaned.lower() in ['null', 'none', '']:
+                    return 0.0
+                try:
+                    budget = int(cleaned)
+                except (ValueError, TypeError):
+                    # If string conversion fails, return 0
+                    return 0.0
+            
+            # Convert to int if it's a float or other numeric type
+            elif not isinstance(budget, int):
+                try:
+                    budget = int(budget)
+                except (ValueError, TypeError):
+                    return 0.0
+            
+            # Check if budget is valid positive number
+            if budget <= 0:
+                return 0.0
+            
+            # Find appropriate tier
+            for tier_name, (min_budget, score) in self.budget_tiers.items():
+                if budget >= min_budget:
+                    return score
+            
+            return 0.1  # Below lowest tier
+            
+        except Exception as e:
+            logger.warning(f"Error scoring budget '{budget}': {e}")
+            return 0.0  # Safe default on any error
     
     def _score_location(self, location: Optional[str]) -> float:
         """Score location based on specificity."""
@@ -274,64 +402,106 @@ class LeadScoringSystem:
         return 0.5
     
     def _score_property_type(
-        self, 
-        property_type: Optional[str], 
-        desired_bedrooms: Optional[int]
+        self,
+        property_type: Optional[str],
+        desired_bedrooms
     ) -> float:
-        """Score property preferences."""
-        score = 0.0
-        
-        # Property type specificity
-        if property_type and property_type.strip():
-            property_type = property_type.strip().lower()
+        """Score property preferences with robust type handling."""
+        try:
+            score = 0.0
             
-            # Specific property types
-            specific_types = [
-                'condo', 'apartment', 'house', 'townhouse', 'villa',
-                'studio', 'loft', 'penthouse', 'duplex'
-            ]
+            # Property type specificity
+            if property_type and property_type.strip():
+                property_type = property_type.strip().lower()
+                
+                # Specific property types
+                specific_types = [
+                    'condo', 'apartment', 'house', 'townhouse', 'villa',
+                    'studio', 'loft', 'penthouse', 'duplex'
+                ]
+                
+                if any(ptype in property_type for ptype in specific_types):
+                    score += 0.6
+                # General property types
+                elif any(ptype in property_type for ptype in ['residential', 'property']):
+                    score += 0.3
+                # Bedroom count mentioned
+                else:
+                    score += 0.2
             
-            if any(ptype in property_type for ptype in specific_types):
-                score += 0.6
-            # General property types
-            elif any(ptype in property_type for ptype in ['residential', 'property']):
-                score += 0.3
-            # Bedroom count mentioned
-            else:
-                score += 0.2
-        
-        # Bedroom preference
-        if desired_bedrooms and desired_bedrooms > 0:
-            if 1 <= desired_bedrooms <= 5:  # Reasonable range
-                score += 0.4
-            else:  # Unusual range
-                score += 0.2
-        
-        return min(score, 1.0)
+            # Bedroom preference with safe type conversion
+            if desired_bedrooms:
+                try:
+                    # Handle string inputs
+                    if isinstance(desired_bedrooms, str):
+                        cleaned = desired_bedrooms.strip()
+                        if cleaned.lower() in ['null', 'none', '']:
+                            bedroom_count = 0
+                        else:
+                            # Extract number from string
+                            import re
+                            number_match = re.search(r'\d+', cleaned)
+                            bedroom_count = int(number_match.group()) if number_match else 0
+                    else:
+                        bedroom_count = int(desired_bedrooms)
+                    
+                    if bedroom_count > 0:
+                        if 1 <= bedroom_count <= 5:  # Reasonable range
+                            score += 0.4
+                        else:  # Unusual range
+                            score += 0.2
+                            
+                except (ValueError, TypeError):
+                    # Invalid bedroom count, don't add to score
+                    pass
+            
+            return min(score, 1.0)
+            
+        except Exception as e:
+            logger.warning(f"Error scoring property type '{property_type}' bedrooms '{desired_bedrooms}': {e}")
+            return 0.5  # Safe default on any error
     
     def _score_completeness(
         self,
-        budget: Optional[int],
+        budget,
         location: Optional[str],
         timeline: Optional[str],
         property_type: Optional[str],
         email: Optional[str],
         name: Optional[str]
     ) -> float:
-        """Score based on information completeness."""
-        fields = {
-            'budget': budget is not None and budget > 0,
-            'location': location is not None and location.strip(),
-            'timeline': timeline is not None and timeline.strip(),
-            'property_type': property_type is not None and property_type.strip(),
-            'email': email is not None and '@' in email,
-            'name': name is not None and name.strip()
-        }
-        
-        completed_fields = sum(fields.values())
-        total_fields = len(fields)
-        
-        return completed_fields / total_fields
+        """Score based on information completeness with robust type handling."""
+        try:
+            # Budget completeness check with safe conversion
+            budget_valid = False
+            if budget is not None:
+                try:
+                    if isinstance(budget, str):
+                        cleaned = budget.replace('$', '').replace(',', '').strip()
+                        budget_num = int(cleaned) if cleaned and cleaned.lower() not in ['null', 'none', ''] else 0
+                    else:
+                        budget_num = int(budget)
+                    budget_valid = budget_num > 0
+                except (ValueError, TypeError):
+                    budget_valid = False
+            
+            fields = {
+                'budget': budget_valid,
+                'location': bool(location is not None and location.strip()),
+                'timeline': bool(timeline is not None and timeline.strip()),
+                'property_type': bool(property_type is not None and property_type.strip()),
+                'email': bool(email is not None and '@' in email),
+                'name': bool(name is not None and name.strip())
+            }
+            
+            completed_fields = sum(1 for value in fields.values() if value is True)
+            total_fields = len(fields)
+            
+            return completed_fields / total_fields
+            
+        except Exception as e:
+            logger.warning(f"Error scoring completeness: {e}")
+            return 0.5  # Safe default on any error
     
     def _score_engagement(
         self,
@@ -384,8 +554,56 @@ class LeadScoringSystem:
         
         return min(score, 1.0)
     
+    def _determine_routing_with_ai(self, score: float, intent_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """Enhanced routing with Phase 1 AI intent analysis."""
+        # Get AI intent category and confidence
+        intent_category = intent_analysis.get('intent_category', 'unknown')
+        ai_confidence = intent_analysis.get('confidence', 0.0)
+        booking_signals = intent_analysis.get('booking_signals', False)
+        budget_mentioned = intent_analysis.get('budget_mentioned', False)
+        
+        # AI-enhanced routing logic
+        if booking_signals or (budget_mentioned and ai_confidence > 0.8):
+            # High-intent signals detected - immediate scheduler
+            return {
+                'next_agent': 'scheduler',
+                'reasoning': f'AI-detected high intent: {intent_category} (booking/budget signals)',
+                'priority': 'high',
+                'ai_enhanced': True,
+                'intent_category': intent_category,
+                'high_intent_reason': 'booking_signals' if booking_signals else 'budget_high_confidence'
+            }
+        elif score >= 0.75 or (intent_category in ['booking_intent', 'budget_inquiry'] and score >= 0.6):
+            # Traditional high score OR AI-detected specific high-intent categories
+            return {
+                'next_agent': 'scheduler',
+                'reasoning': f'Highly qualified lead (score: {score:.3f} >= 0.75) or AI intent: {intent_category}',
+                'priority': 'high',
+                'ai_enhanced': True,
+                'intent_category': intent_category
+            }
+        elif score >= 0.4 or (intent_category in ['information_request', 'property_specific'] and score >= 0.5):
+            # Traditional medium score OR AI-detected nurturing-worthy categories
+            return {
+                'next_agent': 'followup',
+                'reasoning': f'Lead needs nurturing (score: {score:.3f}) with AI intent: {intent_category}',
+                'priority': 'medium',
+                'ai_enhanced': True,
+                'intent_category': intent_category
+            }
+        else:
+            # Low score or unclear intent - try proactive qualification
+            return {
+                'next_agent': 'qualifier',
+                'reasoning': f'Lead needs qualification (score: {score:.3f}) - AI intent: {intent_category}',
+                'priority': 'high',
+                'ai_enhanced': True,
+                'intent_category': intent_category,
+                'proactive_qualification': True
+            }
+
     def _determine_routing(self, score: float) -> Dict[str, Any]:
-        """Determine routing based on score thresholds."""
+        """Legacy routing method for backward compatibility."""
         if score >= 0.75:
             return {
                 'next_agent': 'scheduler',
@@ -399,10 +617,12 @@ class LeadScoringSystem:
                 'priority': 'medium'
             }
         else:
+            # Proactive qualification: instead of offramp, try to qualify further
             return {
-                'next_agent': 'offramp',
-                'reasoning': f'Lead disqualified (score: {score:.3f} < 0.4)',
-                'priority': 'low'
+                'next_agent': 'qualifier',
+                'reasoning': f'Lead needs qualification - attempting to gather more information (score: {score:.3f} < 0.4)',
+                'priority': 'high',  # Changed to high priority for proactive qualification
+                'proactive_qualification': True
             }
     
     def _determine_qualification_stage(self, score: float) -> str:
@@ -502,42 +722,60 @@ class LeadScoringSystem:
     def should_continue_qualification(
         self,
         lead_data: Dict[str, Any],
-        current_score: float
+        current_score: float,
+        conversation_stage: str = None
     ) -> bool:
         """
         Determine if qualification should continue based on current state.
         
+        Enhanced logic that considers conversation stage and proactive responses.
+        
         Args:
             lead_data: Current lead information
             current_score: Current qualification score
+            conversation_stage: Current conversation stage
             
         Returns:
             True if qualification should continue, False otherwise
         """
-        # Check if all required fields are present
-        required_fields = ['budget', 'location', 'timeline', 'email']
-        missing_required = [
-            field for field in required_fields 
-            if not lead_data.get(field)
-        ]
+        # Calculate basic field completeness
+        budget_present = lead_data.get('budget') and lead_data.get('budget') > 0
+        location_present = lead_data.get('location') and lead_data.get('location').strip()
+        property_type_present = lead_data.get('property_type') and lead_data.get('property_type').strip()
+        bedrooms_present = lead_data.get('desired_bedrooms') and lead_data.get('desired_bedrooms') > 0
         
-        # Continue if missing required fields
-        if missing_required:
-            return True
+        # Check if we have basic information for property search
+        basic_search_criteria = budget_present or (property_type_present and bedrooms_present)
         
-        # Continue if score is in nurturing range and could improve
-        if 0.4 <= current_score < 0.75:
-            # Check if optional fields could improve score
-            optional_fields = ['property_type', 'desired_bedrooms']
-            missing_optional = [
-                field for field in optional_fields 
-                if not lead_data.get(field)
-            ]
-            if missing_optional:
+        # If we have basic search criteria, evaluate progression differently
+        if basic_search_criteria:
+            # For higher scores, start providing value instead of asking more questions
+            if current_score >= 0.75:
+                return False  # Ready for scheduler
+            elif current_score >= 0.4:
+                return False  # Ready for followup/nurturing
+            
+            # If score is low but we have some info, ask one more focused question
+            if current_score < 0.4:
+                # Count how many fields we have
+                fields_present = sum([
+                    budget_present,
+                    location_present,
+                    property_type_present,
+                    bedrooms_present,
+                    lead_data.get('timeline') is not None,
+                    lead_data.get('email') is not None
+                ])
+                
+                # If we have 3+ fields, try to provide value instead of asking more
+                if fields_present >= 3:
+                    return False
+                
+                # Otherwise ask for the most critical missing field
                 return True
         
-        # Qualification complete
-        return False
+        # Default: continue qualification for low information scenarios
+        return True
     
     def calculate_enhanced_lead_score(
         self,
@@ -934,6 +1172,73 @@ class LeadScoringSystem:
 
 # Global scoring system instance
 lead_scorer = LeadScoringSystem()
+
+def score_lead_with_intent(
+    message: str,
+    extracted_data: Dict[str, Any],
+    intent_analysis: Dict[str, Any],
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Calculate lead score with intent analysis integration.
+    
+    This function provides a simplified interface for Phase 1 testing,
+    integrating AI intent analysis with traditional lead scoring.
+    
+    Args:
+        message: The original message text
+        extracted_data: Dictionary with extracted lead information (budget, location, etc.)
+        intent_analysis: AI intent analysis results
+        **kwargs: Additional scoring parameters
+        
+    Returns:
+        Dictionary with scoring results including intent contribution
+    """
+    try:
+        # Use the existing calculate_lead_score method with intent analysis
+        result = lead_scorer.calculate_lead_score(
+            message=message,
+            use_ai_intent=True,  # Enable Phase 1 AI intent analysis
+            **extracted_data,
+            **kwargs
+        )
+        
+        # Add intent-specific breakdown
+        intent_score_component = result.get('intent_score_component', 0.0)
+        base_score = result.get('final_score', 0.0) - (intent_score_component * 0.20)  # Remove intent contribution
+        
+        enhanced_result = {
+            'base_score': round(base_score, 3),
+            'intent_score': round(intent_score_component, 3),
+            'intent_contribution': round(intent_score_component * 0.20, 3),  # 20% weight
+            'confidence_boost': intent_analysis.get('confidence', 0.0) * 0.05,  # 5% confidence boost
+            'total_score': round(result.get('final_score', 0.0), 3),
+            'score_breakdown': result.get('score_breakdown', {}),
+            'ai_intent_analysis': result.get('ai_intent_analysis', {}),
+            'intent_category': intent_analysis.get('intent_category', 'unknown'),
+            'high_intent_signals': intent_analysis.get('high_intent_indicators', []),
+            'qualification_readiness': intent_analysis.get('qualification_readiness', {}),
+            'phase_1_enhanced': True
+        }
+        
+        return enhanced_result
+        
+    except Exception as e:
+        logger.error(f"Error in score_lead_with_intent: {e}")
+        return {
+            'base_score': 0.5,
+            'intent_score': 0.5,
+            'intent_contribution': 0.1,
+            'confidence_boost': 0.0,
+            'total_score': 0.6,
+            'score_breakdown': {},
+            'ai_intent_analysis': {},
+            'intent_category': 'error',
+            'high_intent_signals': [],
+            'qualification_readiness': {},
+            'phase_1_enhanced': False,
+            'error': str(e)
+        }
 
 def calculate_lead_score(lead_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
     """

@@ -29,6 +29,8 @@ class WhatsAppWebhookHandler:
         self.message_bus = MessageBus()
         self.app_secret = os.getenv("WHATSAPP_APP_SECRET")
         self.phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+        # Reference to the module-level router for FastAPI integration
+        self.router = router
 
     def verify_whatsapp_signature(self, payload: bytes, signature_header: str) -> bool:
         """
@@ -114,7 +116,9 @@ class WhatsAppWebhookHandler:
 
         try:
             duplicate_key = f"whatsapp_processed:{message_id}"
-            return redis_client.exists(duplicate_key)
+            # Convert to boolean to ensure consistent return type
+            exists_result = redis_client.exists(duplicate_key)
+            return bool(exists_result)
         except Exception as e:
             logger.error(f"Error checking duplicate WhatsApp message: {e}")
             return False

@@ -1,0 +1,633 @@
+"""
+Integration Layer: Proactive Engagement with LangGraph Lead Processing
+
+This module integrates the proactive engagement system with existing LangGraph
+lead processing infrastructure, enabling intelligent conversation flow management
+within the established workflow architecture.
+"""
+
+import logging
+from typing import Dict, Any, Optional, List
+from datetime import datetime, timedelta
+
+from utils.proactive_engagement import (
+    ProactiveEngagementConfig,
+    LangGraphProactiveEngagement,
+    EngagementStrategy,
+    analyze_conversation_context,
+    generate_proactive_intervention,
+    execute_intervention_with_langgraph,
+    monitor_intervention_response
+)
+
+from utils.redis_client import get_thread_state, store_thread_state
+
+logger = logging.getLogger(__name__)
+
+class ProactiveLeadProcessor:
+    """
+    Enhanced lead processor that incorporates proactive engagement
+    within the existing LangGraph workflow infrastructure.
+    """
+    
+    def __init__(self, proactive_config: Optional[ProactiveEngagementConfig] = None):
+        """Initialize with proactive engagement capabilities."""
+        self.proactive_engine = LangGraphProactiveEngagement(proactive_config)
+        self.logger = logging.getLogger(__name__)
+        
+    async def process_lead_with_proactive_engagement(
+        self,
+        user_id: str,
+        current_state: Dict[str, Any],
+        new_message: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Process lead with proactive engagement integration.
+        
+        This method enhances the standard lead processing flow with intelligent
+        proactive interventions based on conversation context and engagement patterns.
+        
+        Args:
+            user_id: User identifier
+            current_state: Current LangGraph state
+            new_message: New message that triggered processing (optional)
+            
+        Returns:
+            Enhanced processing results with proactive engagement
+        """
+        try:
+            self.logger.info(f"🚀 Processing lead with proactive engagement for user {user_id}")
+            
+            # Step 1: Analyze conversation context for proactive opportunities
+            conversation_history = current_state.get("conversation_history", [])
+            
+            context_analysis = await analyze_conversation_context(
+                user_id, current_state, conversation_history
+            )
+            
+            # Step 2: Determine if proactive intervention is needed
+            intervention_needed = self._should_trigger_proactive_intervention(
+                context_analysis, current_state, new_message
+            )
+            
+            processing_result = {
+                "user_id": user_id,
+                "processing_timestamp": datetime.now().isoformat(),
+                "context_analysis": context_analysis,
+                "proactive_intervention_triggered": intervention_needed,
+                "standard_processing": True
+            }
+            
+            # Step 3: Execute proactive intervention if needed
+            if intervention_needed:
+                self.logger.info(f"⚡ Triggering proactive intervention for user {user_id}")
+                
+                intervention = await generate_proactive_intervention(
+                    user_id, context_analysis, current_state
+                )
+                
+                # Execute intervention with LangGraph state management
+                execution_result = await execute_intervention_with_langgraph(
+                    user_id, intervention, current_state
+                )
+                
+                processing_result.update({
+                    "proactive_intervention": intervention,
+                    "intervention_execution": execution_result,
+                    "proactive_processing": True
+                })
+                
+                # If intervention provides immediate value, return early
+                if intervention.get("immediate_value", False):
+                    processing_result["early_completion"] = True
+                    return processing_result
+            
+            # Step 4: Continue with standard lead processing
+            standard_result = await self._execute_standard_processing(
+                user_id, current_state, context_analysis
+            )
+            
+            processing_result.update(standard_result)
+            
+            # Step 5: Schedule follow-up proactive interventions if needed
+            follow_up_scheduled = await self._schedule_follow_up_interventions(
+                user_id, processing_result, context_analysis
+            )
+            
+            if follow_up_scheduled:
+                processing_result["follow_up_interventions"] = follow_up_scheduled
+            
+            self.logger.info(f"✅ Lead processing with proactive engagement completed for user {user_id}")
+            
+            return processing_result
+            
+        except Exception as e:
+            self.logger.error(f"Error in proactive lead processing: {e}")
+            return await self._handle_processing_error(user_id, current_state, e)
+    
+    def _should_trigger_proactive_intervention(
+        self,
+        context_analysis: Dict[str, Any],
+        current_state: Dict[str, Any],
+        new_message: Optional[str] = None
+    ) -> bool:
+        """
+        Determine if proactive intervention should be triggered.
+        
+        Considers multiple factors:
+        - Inactivity patterns
+        - Information completeness gaps
+        - Engagement momentum changes
+        - Conversation flow opportunities
+        """
+        try:
+            # Check inactivity threshold
+            temporal = context_analysis.get("temporal_analysis", {})
+            inactivity_hours = temporal.get("inactivity_duration_hours", 0)
+            
+            if inactivity_hours > 0.5:  # 30 minutes
+                return True
+            
+            # Check information completeness
+            completeness = context_analysis.get("completeness_analysis", {})
+            missing_critical = completeness.get("critical_missing", [])
+            
+            if missing_critical and len(missing_critical) >= 2:
+                return True
+            
+            # Check engagement momentum
+            momentum = context_analysis.get("momentum_analysis", {})
+            engagement_level = momentum.get("engagement_level", "medium")
+            
+            if engagement_level == "low":
+                return True
+            
+            # Check for conversation flow opportunities
+            conversation_stage = momentum.get("current_stage", "")
+            if conversation_stage in ["qualification", "property_search"]:
+                # Trigger contextual suggestions
+                return True
+            
+            # Check for recent ambiguity that needs clarification
+            if new_message and self._detect_ambiguity_in_message(new_message):
+                return True
+            
+            # Check intervention frequency to avoid spam
+            intervention_count = current_state.get("proactive_intervention_count", 0)
+            if intervention_count >= 3:  # Limit interventions per session
+                return False
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error determining intervention trigger: {e}")
+            return False
+    
+    def _detect_ambiguity_in_message(self, message: str) -> bool:
+        """Detect potential ambiguity in user message that needs clarification."""
+        ambiguous_phrases = [
+            "i'm not sure", "maybe", "could be", "kind of", "sort of",
+            "not really sure", "what do you think", "help me decide",
+            "i don't know what", "maybe around", "something like"
+        ]
+        
+        message_lower = message.lower()
+        return any(phrase in message_lower for phrase in ambiguous_phrases)
+    
+    async def _execute_standard_processing(
+        self,
+        user_id: str,
+        current_state: Dict[str, Any],
+        context_analysis: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Execute standard lead processing with context awareness.
+        
+        This method integrates proactive insights into standard processing.
+        """
+        try:
+            # Standard processing with proactive insights
+            enhanced_state = {
+                **current_state,
+                "proactive_context": context_analysis,
+                "processing_enhanced": True
+            }
+            
+            # Here you would integrate with existing lead processing pipeline
+            # For now, returning a placeholder result structure
+            
+            return {
+                "standard_processing_status": "completed",
+                "enhanced_state": enhanced_state,
+                "processing_mode": "proactive_enhanced"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error in standard processing: {e}")
+            return {
+                "standard_processing_status": "error",
+                "error": str(e)
+            }
+    
+    async def _schedule_follow_up_interventions(
+        self,
+        user_id: str,
+        processing_result: Dict[str, Any],
+        context_analysis: Dict[str, Any]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Schedule proactive follow-up interventions based on processing results.
+        
+        Creates scheduled interventions for optimal engagement timing.
+        """
+        try:
+            scheduled_interventions = []
+            
+            # Schedule based on completion status
+            completion_status = processing_result.get("completion_status", "unknown")
+            
+            if completion_status == "qualified":
+                # Schedule property recommendation follow-up
+                follow_up = {
+                    "intervention_type": "property_recommendations",
+                    "scheduled_time": datetime.now() + timedelta(hours=2),
+                    "trigger_conditions": ["qualification_complete"],
+                    "priority": "medium"
+                }
+                scheduled_interventions.append(follow_up)
+                
+            elif completion_status == "partial_qualification":
+                # Schedule information gathering follow-up
+                follow_up = {
+                    "intervention_type": "information_gathering",
+                    "scheduled_time": datetime.now() + timedelta(hours=1),
+                    "trigger_conditions": ["missing_information"],
+                    "priority": "high"
+                }
+                scheduled_interventions.append(follow_up)
+            
+            # Schedule general engagement check based on engagement analysis
+            momentum = context_analysis.get("momentum_analysis", {})
+            if momentum.get("engagement_level") in ["medium", "high"]:
+                follow_up = {
+                    "intervention_type": "engagement_maintenance",
+                    "scheduled_time": datetime.now() + timedelta(hours=4),
+                    "trigger_conditions": ["sustained_engagement"],
+                    "priority": "low"
+                }
+                scheduled_interventions.append(follow_up)
+            
+            # Store scheduled interventions in LangGraph state
+            if scheduled_interventions:
+                thread_key = f"langgraph:thread:{user_id}"
+                current_state = get_thread_state(thread_key) or {}
+                
+                current_state.update({
+                    "scheduled_proactive_interventions": scheduled_interventions,
+                    "last_intervention_scheduling": datetime.now().isoformat()
+                })
+                
+                store_thread_state(thread_key, current_state)
+                
+                self.logger.info(f"📅 Scheduled {len(scheduled_interventions)} follow-up interventions for user {user_id}")
+                return scheduled_interventions
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error scheduling follow-up interventions: {e}")
+            return None
+    
+    async def _handle_processing_error(
+        self,
+        user_id: str,
+        current_state: Dict[str, Any],
+        error: Exception
+    ) -> Dict[str, Any]:
+        """Handle errors in proactive processing gracefully."""
+        self.logger.error(f"Error in proactive lead processing for {user_id}: {error}")
+        
+        # Ensure we don't lose state in case of error
+        try:
+            error_recovery_state = {
+                **current_state,
+                "proactive_processing_error": str(error),
+                "error_timestamp": datetime.now().isoformat(),
+                "processing_fallback": True
+            }
+            
+            thread_key = f"langgraph:thread:{user_id}"
+            store_thread_state(thread_key, error_recovery_state)
+            
+        except Exception as recovery_error:
+            self.logger.error(f"Error in error recovery: {recovery_error}")
+        
+        return {
+            "user_id": user_id,
+            "processing_status": "error",
+            "error": str(error),
+            "fallback_processing": True,
+            "error_timestamp": datetime.now().isoformat()
+        }
+
+class ProactiveConversationManager:
+    """
+    Manager for proactive conversation flow within LangGraph workflows.
+    
+    Handles conversation state transitions and proactive engagement triggers.
+    """
+    
+    def __init__(self):
+        self.proactive_processor = ProactiveLeadProcessor()
+        self.logger = logging.getLogger(__name__)
+    
+    async def manage_conversation_flow(
+        self,
+        user_id: str,
+        current_state: Dict[str, Any],
+        trigger_event: str,
+        event_data: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Manage conversation flow with proactive engagement triggers.
+        
+        Args:
+            user_id: User identifier
+            current_state: Current LangGraph state
+            trigger_event: Event that triggered flow management
+            event_data: Additional event data
+            
+        Returns:
+            Flow management results
+        """
+        try:
+            self.logger.info(f"🔄 Managing conversation flow for user {user_id}, event: {trigger_event}")
+            
+            # Determine appropriate flow based on trigger event
+            if trigger_event == "message_received":
+                result = await self._handle_message_received(
+                    user_id, current_state, event_data
+                )
+            elif trigger_event == "inactivity_detected":
+                result = await self._handle_inactivity_detected(
+                    user_id, current_state
+                )
+            elif trigger_event == "qualification_update":
+                result = await self._handle_qualification_update(
+                    user_id, current_state, event_data
+                )
+            elif trigger_event == "engagement_drop":
+                result = await self._handle_engagement_drop(
+                    user_id, current_state
+                )
+            else:
+                result = await self._handle_generic_event(
+                    user_id, current_state, trigger_event, event_data
+                )
+            
+            # Update conversation state with flow management results
+            if result.get("state_updates"):
+                await self._update_conversation_state(
+                    user_id, current_state, result["state_updates"]
+                )
+            
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error in conversation flow management: {e}")
+            return {
+                "user_id": user_id,
+                "flow_management_status": "error",
+                "error": str(e)
+            }
+    
+    async def _handle_message_received(
+        self,
+        user_id: str,
+        current_state: Dict[str, Any],
+        event_data: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Handle new message with proactive engagement analysis."""
+        message = event_data.get("message") if event_data else None
+        
+        # Process with proactive engagement
+        processing_result = await self.proactive_processor.process_lead_with_proactive_engagement(
+            user_id, current_state, message
+        )
+        
+        return {
+            "event_handled": "message_received",
+            "processing_result": processing_result,
+            "proactive_triggered": processing_result.get("proactive_intervention_triggered", False),
+            "state_updates": {
+                "last_interaction": datetime.now().isoformat(),
+                "proactive_analysis": processing_result.get("context_analysis")
+            }
+        }
+    
+    async def _handle_inactivity_detected(
+        self,
+        user_id: str,
+        current_state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Handle detected inactivity with re-engagement intervention."""
+        # Trigger proactive re-engagement
+        context_analysis = await analyze_conversation_context(
+            user_id, current_state
+        )
+        
+        intervention = await generate_proactive_intervention(
+            user_id, context_analysis, current_state
+        )
+        
+        # Force inactivity re-engagement strategy
+        intervention["strategy"] = EngagementStrategy.INACTIVITY_REENGAGEMENT.value
+        intervention["inactivity_trigger"] = True
+        
+        execution_result = await execute_intervention_with_langgraph(
+            user_id, intervention, current_state
+        )
+        
+        return {
+            "event_handled": "inactivity_detected",
+            "inactivity_intervention": intervention,
+            "execution_result": execution_result,
+            "state_updates": {
+                "last_inactivity_intervention": datetime.now().isoformat(),
+                "inactivity_count": current_state.get("inactivity_count", 0) + 1
+            }
+        }
+    
+    async def _handle_qualification_update(
+        self,
+        user_id: str,
+        current_state: Dict[str, Any],
+        event_data: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Handle qualification status updates with targeted interventions."""
+        old_status = event_data.get("old_status") if event_data else None
+        new_status = event_data.get("new_status") if event_data else None
+        
+        self.logger.info(f"📊 Qualification update for {user_id}: {old_status} -> {new_status}")
+        
+        # Generate context-aware follow-up based on qualification status
+        context_analysis = await analyze_conversation_context(
+            user_id, current_state
+        )
+        
+        if new_status == "qualified":
+            # Trigger property recommendation intervention
+            intervention = await generate_proactive_intervention(
+                user_id, context_analysis, current_state
+            )
+            intervention["strategy"] = EngagementStrategy.CONTEXT_AWARE_SUGGESTION.value
+            intervention["qualification_complete"] = True
+            
+        elif new_status == "partially_qualified":
+            # Trigger progressive disclosure intervention
+            intervention = await generate_proactive_intervention(
+                user_id, context_analysis, current_state
+            )
+            intervention["strategy"] = EngagementStrategy.PROGRESSIVE_DISCLOSURE.value
+            intervention["missing_info_gathering"] = True
+            
+        else:
+            # Generic intervention for other status changes
+            intervention = await generate_proactive_intervention(
+                user_id, context_analysis, current_state
+            )
+        
+        execution_result = await execute_intervention_with_langgraph(
+            user_id, intervention, current_state
+        )
+        
+        return {
+            "event_handled": "qualification_update",
+            "status_change": {"from": old_status, "to": new_status},
+            "follow_up_intervention": intervention,
+            "execution_result": execution_result,
+            "state_updates": {
+                "qualification_history": current_state.get("qualification_history", []) + [{
+                    "timestamp": datetime.now().isoformat(),
+                    "old_status": old_status,
+                    "new_status": new_status
+                }]
+            }
+        }
+    
+    async def _handle_engagement_drop(
+        self,
+        user_id: str,
+        current_state: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Handle engagement drop with momentum optimization."""
+        # Trigger momentum optimization intervention
+        context_analysis = await analyze_conversation_context(
+            user_id, current_state
+        )
+        
+        intervention = await generate_proactive_intervention(
+            user_id, context_analysis, current_state
+        )
+        
+        # Force momentum optimization strategy
+        intervention["strategy"] = EngagementStrategy.MOMENTUM_OPTIMIZATION.value
+        intervention["engagement_drop_detected"] = True
+        
+        execution_result = await execute_intervention_with_langgraph(
+            user_id, intervention, current_state
+        )
+        
+        return {
+            "event_handled": "engagement_drop",
+            "momentum_intervention": intervention,
+            "execution_result": execution_result,
+            "state_updates": {
+                "last_momentum_intervention": datetime.now().isoformat(),
+                "engagement_drop_count": current_state.get("engagement_drop_count", 0) + 1
+            }
+        }
+    
+    async def _handle_generic_event(
+        self,
+        user_id: str,
+        current_state: Dict[str, Any],
+        trigger_event: str,
+        event_data: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Handle generic events with appropriate proactive responses."""
+        self.logger.info(f"🔄 Handling generic event: {trigger_event} for user {user_id}")
+        
+        # Generate appropriate intervention based on event type
+        context_analysis = await analyze_conversation_context(
+            user_id, current_state
+        )
+        
+        # Default to context-aware suggestion for generic events
+        intervention = await generate_proactive_intervention(
+            user_id, context_analysis, current_state
+        )
+        
+        execution_result = await execute_intervention_with_langgraph(
+            user_id, intervention, current_state
+        )
+        
+        return {
+            "event_handled": trigger_event,
+            "generic_intervention": intervention,
+            "execution_result": execution_result,
+            "state_updates": {
+                "last_generic_intervention": datetime.now().isoformat(),
+                "event_history": current_state.get("event_history", []) + [{
+                    "timestamp": datetime.now().isoformat(),
+                    "event": trigger_event,
+                    "data": event_data
+                }]
+            }
+        }
+    
+    async def _update_conversation_state(
+        self,
+        user_id: str,
+        current_state: Dict[str, Any],
+        updates: Dict[str, Any]
+    ) -> None:
+        """Update LangGraph conversation state with flow management results."""
+        try:
+            updated_state = {
+                **current_state,
+                **updates,
+                "last_flow_management": datetime.now().isoformat()
+            }
+            
+            thread_key = f"langgraph:thread:{user_id}"
+            store_thread_state(thread_key, updated_state)
+            
+        except Exception as e:
+            self.logger.error(f"Error updating conversation state: {e}")
+
+# Global instances for easy integration
+proactive_lead_processor = ProactiveLeadProcessor()
+proactive_conversation_manager = ProactiveConversationManager()
+
+# Convenience functions for integration
+async def process_lead_with_proactive_engagement(
+    user_id: str,
+    current_state: Dict[str, Any],
+    new_message: Optional[str] = None
+) -> Dict[str, Any]:
+    """Convenience function for proactive lead processing."""
+    return await proactive_lead_processor.process_lead_with_proactive_engagement(
+        user_id, current_state, new_message
+    )
+
+async def manage_proactive_conversation_flow(
+    user_id: str,
+    current_state: Dict[str, Any],
+    trigger_event: str,
+    event_data: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Convenience function for proactive conversation management."""
+    return await proactive_conversation_manager.manage_conversation_flow(
+        user_id, current_state, trigger_event, event_data
+    )

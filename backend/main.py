@@ -14,8 +14,11 @@ from dotenv import load_dotenv
 # Load environment first
 load_dotenv()
 
-# Add to path before imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Fix import path - add parent directory to path for backend imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.insert(0, current_dir)
+sys.path.insert(0, parent_dir)
 
 # Import Redis client
 from utils.redis_client import redis_client
@@ -346,6 +349,16 @@ async def send_instagram_reply(recipient_id: str, message: str, ig_account_id: s
     if not token:
         print("⚠️ No INSTAGRAM_PAGE_ACCESS_TOKEN, skipping reply")
         return
+    
+    # Enforce Instagram API message length limit (1000 characters)
+    max_length = 1000
+    if len(message) > max_length:
+        # Truncate message and add indicator
+        truncation_indicator = "... [Message truncated]"
+        available_length = max_length - len(truncation_indicator)
+        truncated_message = message[:available_length] + truncation_indicator
+        print(f"⚠️ Message truncated from {len(message)} to {len(truncated_message)} characters")
+        message = truncated_message
     
     print(f"📤 Sending from IG account {ig_account_id} to {recipient_id}")
     

@@ -53,6 +53,12 @@ class IndustryConfig:
     # Channel preferences
     preferred_channels: List[str]
     channel_fallback_order: List[str]
+    
+    # Phase 2: Industry-specific configurations
+    budget_bands: Optional[Dict[str, Any]] = None
+    qualification_states: Optional[Dict[str, Any]] = None
+    question_priorities: Optional[List[Dict[str, Any]]] = None
+    transparency_rules: Optional[Dict[str, bool]] = None
 
 
 class IndustryConfigManager:
@@ -90,11 +96,17 @@ class IndustryConfigManager:
         """Load default industry configurations."""
         return {
             IndustryType.REAL_ESTATE.value: IndustryConfig(
-                conversion_threshold=0.6,
-                nurture_threshold=0.35,
+                conversion_threshold=0.75,  # Phase 2: Higher threshold for quality
+                nurture_threshold=0.40,     # Phase 2: Higher nurture threshold
                 required_touches=8,
                 scoring_weights={
-                    "budget": 0.25,
+                    # Phase 2: Enhanced scoring weights
+                    "budget_alignment": 0.30,      # Budget band alignment (30%)
+                    "role_clarity": 0.25,          # Decision maker clarity (25%)
+                    "urgency_score": 0.20,         # Timeline urgency (20%)
+                    "use_case_clarity": 0.15,      # Personal vs investment (15%)
+                    "engagement_quality": 0.10,    # Response quality (10%)
+                    # Legacy weights (maintained for backward compatibility)
                     "location": 0.20,
                     "timeline": 0.15,
                     "property_type": 0.10,
@@ -103,23 +115,58 @@ class IndustryConfigManager:
                 },
                 value_props=[
                     "market_insights",
-                    "property_recommendations",
-                    "investment_analysis"
+                    "property_recommendations", 
+                    "investment_analysis",
+                    # Phase 2: Enhanced value propositions
+                    "transparent_scoring",
+                    "role_clarification",
+                    "qualification_breakdown"
                 ],
                 compliance_modules=[
                     "fair_housing",
-                    "disclosure_requirements"
+                    "disclosure_requirements",
+                    # Phase 2: Additional compliance
+                    "transparency_requirements"
                 ],
                 nurture_cadence_days=[1, 3, 7, 14, 21, 28, 35, 42],
                 max_nurture_duration_days=60,
                 booking_triggers=[
                     "high_score",
-                    "specific_property_inquiry",
-                    "financing_discussion"
+                    "specific_property_inquiry", 
+                    "financing_discussion",
+                    # Phase 2: Additional triggers
+                    "qualified_decision_maker",
+                    "transparent_score_achieved"
                 ],
                 booking_windows_days=30,
                 preferred_channels=["email", "phone", "sms"],
-                channel_fallback_order=["email", "sms", "phone"]
+                channel_fallback_order=["email", "sms", "phone"],
+                # Phase 2: Real Estate specific configurations
+                budget_bands={
+                    "entry_level": {"range": (300000, 500000), "weight": 0.6},
+                    "mid_tier": {"range": (500000, 800000), "weight": 0.7},
+                    "premium": {"range": (800000, 1200000), "weight": 0.8},
+                    "luxury": {"range": (1200000, float('inf')), "weight": 0.9}
+                },
+                qualification_states={
+                    "initial_contact": {"threshold": 0.2, "questions": 1},
+                    "basic_qualification": {"threshold": 0.4, "questions": 3},
+                    "detailed_qualification": {"threshold": 0.6, "questions": 2},
+                    "scheduler_ready": {"threshold": 0.75, "questions": 0}
+                },
+                question_priorities=[
+                    {"category": "budget", "priority": 1, "weight": 0.3},
+                    {"category": "location", "priority": 2, "weight": 0.25},
+                    {"category": "timeline", "priority": 3, "weight": 0.2},
+                    {"category": "role", "priority": 4, "weight": 0.15},
+                    {"category": "use_case", "priority": 5, "weight": 0.1}
+                ],
+                transparency_rules={
+                    "show_scoring_breakdown": True,
+                    "explain_decision_criteria": True,
+                    "provide_improvement_suggestions": True,
+                    "audit_all_decisions": True
+                }
             ),
             
             IndustryType.FITNESS.value: IndustryConfig(

@@ -1,14 +1,32 @@
-"""Utility helpers supporting PRD-compliant qualifier flows."""
+"""
+Phase 2: Rules-First Qualification Engine - Transparent Scoring System
+
+This module implements transparent, rules-based qualification with LLM-powered
+question mapping and scoring breakdown for the real estate qualification system.
+
+Key Features:
+- Transparent scoring rules with clear breakdown
+- Real estate specific budget bands (3-5 lakh ranges)
+- Question priority and conditional flow using LLM
+- Qualification state machine with progressive gates
+- Role/use case scoring for decision makers
+"""
 
 from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta
 from statistics import mean
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+import json
+import logging
 
 from utils.audit import audit_log_event
 from utils.supabase_client import supabase
+from utils.llm_client import get_llm_response_sync
+from config.industry_configs import get_industry_config
+
+logger = logging.getLogger(__name__)
 
 
 _LOCATION_ALTERNATIVES: Dict[str, Sequence[str]] = {
@@ -17,6 +35,441 @@ _LOCATION_ALTERNATIVES: Dict[str, Sequence[str]] = {
     "Austin": ("Round Rock", "Cedar Park", "Georgetown"),
     "New York": ("Brooklyn", "Queens", "Jersey City"),
 }
+
+# Real Estate Budget Bands (3-5 Lakh Ranges)
+REAL_ESTATE_BUDGET_BANDS = {
+    "entry_level": {
+        "range": (300000, 500000),
+        "description": "Entry Level (3-5 Lakh)",
+        "score": 0.6,
+        "questions": ["What's your budget for a 2-3 bedroom apartment?", "Are you looking for investment or personal use?"]
+    },
+    "mid_tier": {
+        "range": (500000, 800000),
+        "description": "Mid Tier (5-8 Lakh)", 
+        "score": 0.7,
+        "questions": ["What's your target budget range?", "Timeline for purchase?"]
+    },
+    "premium": {
+        "range": (800000, 1200000),
+        "description": "Premium (8-12 Lakh)",
+        "score": 0.8,
+        "questions": ["What amenities are important to you?", "Are you working with a specific location?"]
+    },
+    "luxury": {
+        "range": (1200000, float('inf')),
+        "description": "Luxury (12+ Lakh)",
+        "score": 0.9,
+        "questions": ["What luxury features do you prioritize?", "Do you have preferred developments?"]
+    }
+}
+
+# Qualification State Machine States
+QUALIFICATION_STATES = {
+    "initial_contact": {
+        "description": "First message - establishing interest",
+        "threshold_score": 0.2,
+        "next_state": "basic_qualification",
+        "questions": 1
+    },
+    "basic_qualification": {
+        "description": "Gathering budget, location, timeline",
+        "threshold_score": 0.4,
+        "next_state": "detailed_qualification", 
+        "questions": 3
+    },
+    "detailed_qualification": {
+        "description": "Role, use case, urgency assessment",
+        "threshold_score": 0.6,
+        "next_state": "scheduler_ready",
+        "questions": 2
+    },
+    "scheduler_ready": {
+        "description": "Ready for scheduling handover",
+        "threshold_score": 0.75,
+        "next_state": "scheduler",
+        "questions": 0
+    }
+}
+
+def generate_transparent_scoring_breakdown(
+    lead_data: Dict[str, Any],
+    industry_type: str = "real_estate"
+) -> Dict[str, Any]:
+    """
+    Generate transparent scoring breakdown with LLM-powered analysis.
+    
+    Args:
+        lead_data: Lead information dictionary
+        industry_type: Industry for scoring context
+        
+    Returns:
+        Transparent scoring breakdown with reasoning
+    """
+    try:
+        # Get industry configuration
+        industry_config = get_industry_config(industry_type)
+        
+        # Build scoring context for LLM
+        scoring_context = {
+            "lead_data": lead_data,
+            "industry_config": industry_config.__dict__,
+            "budget_bands": REAL_ESTATE_BUDGET_BANDS,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # LLM-powered transparent scoring
+        prompt = f"""
+        Analyze this real estate lead with TRANSPARENT scoring rules:
+        
+        Lead Data: {json.dumps(lead_data, indent=2)}
+        Budget Bands: {json.dumps(REAL_ESTATE_BUDGET_BANDS, indent=2)}
+        
+        Calculate score (0-1) using these TRANSPARENT rules:
+        1. Budget Alignment (40%): How well budget matches real estate ranges
+        2. Role Clarity (25%): Decision maker vs browser identification  
+        3. Urgency Score (20%): Timeline and need level
+        4. Use Case Clarity (10%): Personal vs investment clarity
+        5. Engagement Quality (5%): Response specificity
+        
+        Return JSON with:
+        {{
+            "total_score": 0.75,
+            "scoring_breakdown": {{
+                "budget_score": 0.8,
+                "role_clarity_score": 0.6, 
+                "urgency_score": 0.7,
+                "use_case_score": 0.8,
+                "engagement_score": 0.6
+            }},
+            "budget_band_analysis": {{
+                "detected_band": "mid_tier",
+                "confidence": 0.9,
+                "range_alignment": "good"
+            }},
+            "role_analysis": {{
+                "identified_role": "buyer_decision_maker",
+                "confidence": 0.7,
+                "signals": ["mentioned budget", "specific timeline"]
+            }},
+            "scoring_explanation": "Clear reasoning for each score component",
+            "qualification_state": "basic_qualification",
+            "next_actions": ["Ask about timeline", "Confirm role"]
+        }}
+        """
+        
+        response = get_llm_response_sync(prompt)
+        
+        try:
+            scoring_result = json.loads(response)
+        except json.JSONDecodeError:
+            # Fallback parsing
+            scoring_result = _fallback_scoring_calculation(lead_data)
+        
+        # Add audit logging
+        audit_log_event("transparent_scoring_calculated", {
+            "lead_id": lead_data.get("user_id", "unknown"),
+            "score": scoring_result.get("total_score", 0.5),
+            "state": scoring_result.get("qualification_state", "unknown"),
+            "budget_band": scoring_result.get("budget_band_analysis", {}).get("detected_band", "unknown"),
+            "role": scoring_result.get("role_analysis", {}).get("identified_role", "unknown")
+        })
+        
+        return {
+            "success": True,
+            "scoring_result": scoring_result,
+            "timestamp": datetime.now().isoformat(),
+            "audit_trail": "transparent_scoring_calculated"
+        }
+        
+    except Exception as e:
+        logger.error(f"Transparent scoring failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "fallback_score": _calculate_fallback_score(lead_data),
+            "timestamp": datetime.now().isoformat()
+        }
+
+def _fallback_scoring_calculation(lead_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Fallback scoring when LLM analysis fails."""
+    budget = lead_data.get("budget", 0)
+    timeline = lead_data.get("timeline", "")
+    role = lead_data.get("role", "")
+    
+    # Basic fallback scoring
+    budget_score = 0.6 if budget >= 500000 else 0.4
+    timeline_score = 0.7 if "immediate" in timeline.lower() else 0.5
+    role_score = 0.8 if "buyer" in role.lower() else 0.5
+    
+    total_score = (budget_score * 0.4 + timeline_score * 0.3 + role_score * 0.3)
+    
+    return {
+        "total_score": round(total_score, 2),
+        "scoring_breakdown": {
+            "budget_score": budget_score,
+            "role_clarity_score": role_score,
+            "urgency_score": timeline_score,
+            "use_case_score": 0.5,
+            "engagement_score": 0.5
+        },
+        "budget_band_analysis": {
+            "detected_band": "mid_tier" if budget >= 500000 else "entry_level",
+            "confidence": 0.6,
+            "range_alignment": "partial"
+        },
+        "role_analysis": {
+            "identified_role": "prospective_buyer",
+            "confidence": 0.5,
+            "signals": ["basic_inquiry"]
+        },
+        "scoring_explanation": "Fallback scoring due to LLM analysis failure",
+        "qualification_state": "basic_qualification",
+        "next_actions": ["Confirm timeline", "Gather more details"]
+    }
+
+def _calculate_fallback_score(lead_data: Dict[str, Any]) -> float:
+    """Calculate basic fallback score."""
+    score = 0.3  # Base score
+    
+    if lead_data.get("budget"):
+        score += 0.2
+    if lead_data.get("location"):
+        score += 0.2
+    if lead_data.get("timeline"):
+        score += 0.2
+        
+    return min(score, 0.7)
+
+def prioritize_questions_llm(
+    lead_data: Dict[str, Any],
+    asked_questions: List[str],
+    current_state: str = "initial_contact"
+) -> List[Dict[str, Any]]:
+    """
+    Use LLM to intelligently prioritize qualification questions.
+    
+    Args:
+        lead_data: Current lead information
+        asked_questions: Questions already asked
+        current_state: Current qualification state
+        
+    Returns:
+        Prioritized list of questions with reasoning
+    """
+    try:
+        # Build question prioritization context
+        context = {
+            "lead_data": lead_data,
+            "asked_questions": asked_questions,
+            "current_state": current_state,
+            "qualification_states": QUALIFICATION_STATES,
+            "budget_bands": REAL_ESTATE_BUDGET_BANDS
+        }
+        
+        prompt = f"""
+        Prioritize qualification questions for this real estate lead:
+        
+        Lead Data: {json.dumps(lead_data, indent=2)}
+        Asked Questions: {asked_questions}
+        Current State: {current_state}
+        
+        Available question categories:
+        1. BUDGET (High Priority) - Budget bands, price range
+        2. LOCATION (High Priority) - Specific area, neighborhood
+        3. TIMELINE (Medium Priority) - When looking to buy
+        4. ROLE (Medium Priority) - Decision maker, first-time buyer
+        5. USE CASE (Medium Priority) - Investment vs personal
+        6. URGENCY (Low Priority) - How urgent is need
+        7. PROPERTY_TYPE (Low Priority) - House, condo, etc.
+        
+        Based on current state "{current_state}", return 2-3 most important next questions:
+        
+        Return JSON:
+        {{
+            "prioritized_questions": [
+                {{
+                    "category": "budget",
+                    "question": "What's your target budget range?",
+                    "priority": 1,
+                    "reasoning": "Need budget to show relevant properties",
+                    "expected_impact": 0.3
+                }}
+            ],
+            "state_transition": {{
+                "from": "{current_state}",
+                "to": "basic_qualification",
+                "requirements": ["budget", "location"]
+            }}
+        }}
+        """
+        
+        response = get_llm_response_sync(prompt)
+        
+        try:
+            question_priorities = json.loads(response)
+        except json.JSONDecodeError:
+            question_priorities = _fallback_question_prioritization(lead_data, asked_questions)
+        
+        return question_priorities
+        
+    except Exception as e:
+        logger.error(f"Question prioritization failed: {e}")
+        return _fallback_question_prioritization(lead_data, asked_questions)
+
+def _fallback_question_prioritization(lead_data: Dict[str, Any], asked_questions: List[str]) -> Dict[str, Any]:
+    """Fallback question prioritization."""
+    # Basic prioritization logic
+    available_questions = [
+        {
+            "category": "budget",
+            "question": "What's your approximate budget for this property?",
+            "priority": 1,
+            "reasoning": "Essential for property matching",
+            "expected_impact": 0.3
+        },
+        {
+            "category": "location", 
+            "question": "What area or neighborhood are you interested in?",
+            "priority": 2,
+            "reasoning": "Needed for location-based searches",
+            "expected_impact": 0.25
+        },
+        {
+            "category": "timeline",
+            "question": "When are you planning to make this purchase?",
+            "priority": 3,
+            "reasoning": "Urgency affects qualification score",
+            "expected_impact": 0.2
+        }
+    ]
+    
+    # Filter out already asked questions
+    filtered_questions = [
+        q for q in available_questions
+        if q["category"] not in asked_questions
+    ][:3]
+    
+    return {
+        "prioritized_questions": filtered_questions,
+        "state_transition": {
+            "from": "initial_contact",
+            "to": "basic_qualification",
+            "requirements": ["budget", "location"]
+        }
+    }
+
+def assess_qualification_readiness(
+    lead_data: Dict[str, Any],
+    current_score: float,
+    asked_questions: List[str]
+) -> Dict[str, Any]:
+    """
+    Assess if lead is ready for scheduler handoff using rules-based gates.
+    
+    Args:
+        lead_data: Lead information
+        current_score: Current qualification score
+        asked_questions: Questions already asked
+        
+    Returns:
+        Readiness assessment with transparent criteria
+    """
+    try:
+        # Calculate essential criteria
+        essential_criteria = {
+            "budget_known": bool(lead_data.get("budget") and lead_data.get("budget") > 0),
+            "location_known": bool(lead_data.get("location") and lead_data.get("location").strip()),
+            "timeline_known": bool(lead_data.get("timeline") and lead_data.get("timeline").strip()),
+            "role_clarified": bool(lead_data.get("role") and lead_data.get("role").strip()),
+            "use_case_clear": bool(lead_data.get("use_case") and lead_data.get("use_case").strip())
+        }
+        
+        # Calculate completion percentage
+        completed_criteria = sum(essential_criteria.values())
+        total_criteria = len(essential_criteria)
+        completion_percentage = (completed_criteria / total_criteria) * 100
+        
+        # LLM-powered readiness assessment
+        readiness_context = {
+            "lead_data": lead_data,
+            "current_score": current_score,
+            "essential_criteria": essential_criteria,
+            "completion_percentage": completion_percentage,
+            "asked_questions_count": len(asked_questions)
+        }
+        
+        prompt = f"""
+        Assess readiness for real estate scheduler handoff:
+        
+        Lead Data: {json.dumps(lead_data, indent=2)}
+        Score: {current_score}
+        Completion: {completion_percentage:.1f}%
+        Essential Criteria: {json.dumps(essential_criteria, indent=2)}
+        
+        Qualification Gates:
+        - Minimum Score: 0.75
+        - Essential Info: Budget + Location + Timeline (80% criteria)
+        - Quality Check: Clear role/use case
+        
+        Return JSON:
+        {{
+            "ready_for_scheduler": false,
+            "readiness_score": 0.6,
+            "blocking_factors": ["missing_role_clarity"],
+            "missing_critical_info": ["role"],
+            "next_steps": ["Clarify decision maker role", "Confirm use case"],
+            "transparency_report": {{
+                "score_threshold_met": false,
+                "essential_info_complete": false,
+                "quality_gate_passed": false,
+                "overall_readiness": "partial"
+            }}
+        }}
+        """
+        
+        response = get_llm_response_sync(prompt)
+        
+        try:
+            readiness_assessment = json.loads(response)
+        except json.JSONDecodeError:
+            readiness_assessment = _fallback_readiness_assessment(lead_data, current_score, essential_criteria)
+        
+        return readiness_assessment
+        
+    except Exception as e:
+        logger.error(f"Readiness assessment failed: {e}")
+        return _fallback_readiness_assessment(lead_data, current_score, essential_criteria)
+
+def _fallback_readiness_assessment(
+    lead_data: Dict[str, Any], 
+    current_score: float, 
+    essential_criteria: Dict[str, bool]
+) -> Dict[str, Any]:
+    """Fallback readiness assessment."""
+    completion_percentage = (sum(essential_criteria.values()) / len(essential_criteria)) * 100
+    
+    # Basic readiness logic
+    score_ready = current_score >= 0.75
+    info_ready = completion_percentage >= 80
+    
+    ready_for_scheduler = score_ready and info_ready
+    
+    missing_info = [k for k, v in essential_criteria.items() if not v]
+    
+    return {
+        "ready_for_scheduler": ready_for_scheduler,
+        "readiness_score": min(current_score, completion_percentage / 100),
+        "blocking_factors": missing_info if not ready_for_scheduler else [],
+        "missing_critical_info": missing_info,
+        "next_steps": ["Complete missing information"] if missing_info else ["Ready for scheduling"],
+        "transparency_report": {
+            "score_threshold_met": score_ready,
+            "essential_info_complete": info_ready,
+            "quality_gate_passed": bool(lead_data.get("role") and lead_data.get("use_case")),
+            "overall_readiness": "ready" if ready_for_scheduler else "partial"
+        }
+    }
 
 
 def reconcile_budget_mismatch(
@@ -472,6 +925,7 @@ def _safe_price(item: Dict[str, Any]) -> int:
 
 
 __all__ = [
+    # Phase 1: Original functions
     "reconcile_budget_mismatch",
     "calculate_temporal_qualification_adjustments",
     "_analyze_inventory_by_bedrooms",
@@ -481,4 +935,13 @@ __all__ = [
     "_generate_reconciliation_recommendation",
     "_format_reconciliation_message",
     "_build_fallback_options",
+    # Phase 2: Transparent scoring system
+    "REAL_ESTATE_BUDGET_BANDS",
+    "QUALIFICATION_STATES", 
+    "generate_transparent_scoring_breakdown",
+    "prioritize_questions_llm",
+    "assess_qualification_readiness",
+    "_fallback_scoring_calculation",
+    "_fallback_question_prioritization",
+    "_fallback_readiness_assessment",
 ]

@@ -9,14 +9,16 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     hash VARCHAR NOT NULL,
     prev_hash VARCHAR,
     timestamp TIMESTAMPTZ DEFAULT NOW(),
-    correlation_id UUID,
-    
-    -- Indexes for performance
-    INDEX idx_audit_logs_entity_id (entity_id),
-    INDEX idx_audit_logs_event_type (event_type),
-    INDEX idx_audit_logs_timestamp (timestamp),
-    INDEX idx_audit_logs_correlation_id (correlation_id)
+    correlation_id UUID
 );
+
+-- Create indexes for performance (PostgreSQL syntax)
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_id ON audit_logs(entity_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_event_type ON audit_logs(event_type);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_type ON audit_logs(entity_type);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_correlation_id ON audit_logs(correlation_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_hash ON audit_logs(hash);
 
 -- Enable Row Level Security
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;

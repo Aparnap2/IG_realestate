@@ -1,20 +1,24 @@
 """
-Router Agent - Intent Classification & Compliance Gateway
+Router Agent - Intent Classification & Compliance Gateway (Updated for Unified Orchestration)
 
-This agent serves as the entry point for all conversations, implementing:
-1. Intent classification using LLM with structured output
-2. Fair housing compliance checks before any response
-3. GDPR/TCPA consent tracking
-4. Routing to appropriate specialist agents
-5. Immutable audit logging of all decisions
+This agent has been updated to use the new Unified State Machine Coordinator,
+replacing manual agent designation with automated state transitions.
+
+Key Changes:
+1. Replaced manual routing with unified state coordinator
+2. Integrated automated agent orchestration
+3. Maintained compliance evaluation
+4. Added universal correlation ID tracking
 
 According to PRD Section 2.1: Intelligent Multi-Channel Lead Capture
+Addresses: Priority 1 Gap 1.1 - Agent Orchestration Integration Failure
 """
 
 import sys
 import os
 import asyncio
-from typing import Dict, Any, Literal, Optional
+import logging
+from typing import Dict, Any, Literal, Optional, Tuple
 from datetime import datetime
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -27,10 +31,12 @@ from schemas.state import AgentState
 from tools import compliance as compliance_tools
 from tools.agent_tools import send_instagram_message
 import utils.audit as audit_utils
-from config import get_settings
+from config.settings import get_settings
 from utils.observability import log_agent_handoff
 from utils.redis_client import get_conversation_state
+from .unified_state_coordinator import unified_state_coordinator
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 class IntentClassification(BaseModel):
@@ -95,21 +101,24 @@ class RouterAgent:
             "value": ["guide", "checklist", "ebook", "download", "resource", "tips", "help", "advice"]
         }
     
-    async def process(self, state: AgentState) -> Dict[str, Any]:
+async def process(self, state: AgentState) -> Dict[str, Any]:
         """
-        Process incoming message through basic intent classification.
+        Process incoming message through unified state machine orchestration.
+        
+        CRITICAL: Updated to use Unified State Machine Coordinator instead of manual routing.
+        This addresses Priority 1 Gap 1.1 - Agent Orchestration Integration Failure.
         
         Flow:
         1. Extract latest user message
-        2. Classify intent using keyword matching
-        3. Route to qualifier agent (simplified flow)
-        4. Basic compliance check
+        2. Use unified state coordinator for automated routing
+        3. Maintain compliance evaluation
+        4. Log complete orchestration context
         
         Args:
             state: Current conversation state with lead and message history
             
         Returns:
-            Updated state with routing decision
+            Updated state with automated routing decision
         """
         lead = state["lead"]
         messages = state.get("messages", [])
@@ -117,7 +126,8 @@ class RouterAgent:
         # Log router invocation
         audit_utils.audit_log_event("router_invoked", {
             "lead_id": lead.user_id,
-            "message_count": len(messages)
+            "message_count": len(messages),
+            "routing_method": "automated_state_machine"
         })
         
         try:
@@ -130,33 +140,15 @@ class RouterAgent:
             if latest_message.get("role") != "user":
                 return self._handle_non_user_message(state)
             
-            # Classify intent using enhanced keyword matching
-            classification = self._classify_intent(latest_message["content"])
+            # CRITICAL: Use unified state coordinator for automated orchestration
+            logger.info(f"🎯 Using automated orchestration for {lead.user_id}")
             
-            # Check if this is a comment-triggered warm-up conversation
-            conversation_state = get_conversation_state(lead.user_id) or {}
-            current_stage = conversation_state.get("stage", "")
+            next_agent, orchestration_context = await unified_state_coordinator.orchestrate_agent_transition(
+                current_state=state,
+                trigger_event="message_processed"
+            )
             
-            if current_stage == "warmup" or classification.intent == "comment_warmup":
-                next_agent = "warmup"
-            elif classification.intent in ["accept_lead_magnet", "decline_lead_magnet"]:
-                next_agent = "value_delivery"
-            elif classification.intent in ["request_property_info", "ask_market_question", "value_delivery_request"]:
-                next_agent = "value_delivery"
-            elif classification.intent == "nurture_response":
-                next_agent = "followup"
-            else:
-                # Enhanced routing based on qualification stage
-                if lead.qualification_stage == "qualified":
-                    next_agent = "scheduler"
-                elif lead.qualification_stage == "nurturing":
-                    next_agent = "followup"
-                elif lead.qualification_stage == "disqualified":
-                    next_agent = "offramp"
-                else:
-                    next_agent = "qualifier"
-            
-            # Basic compliance check
+            # Basic compliance check (maintained from original)
             compliance_result = await self._evaluate_compliance(
                 latest_message["content"],
                 lead
@@ -166,29 +158,36 @@ class RouterAgent:
             if compliance_result["blocked"]:
                 return self._handle_compliance_violation(state, compliance_result)
             
-            # Update state with routing decision
+            # Update state with automated orchestration results
             state["current_agent"] = next_agent
+            state["orchestration_context"] = orchestration_context
             state["agent_decision"] = {
                 "agent_type": "router",
-                "reasoning": classification.reasoning,
-                "action": f"route_to_{next_agent}",
-                "confidence": classification.confidence,
-                "intent": classification.intent
+                "reasoning": orchestration_context.get("automation_reason", "automated_orchestration"),
+                "action": f"orchestrate_to_{next_agent}",
+                "confidence": 0.9,  # High confidence in automated orchestration
+                "intent": "automated_routing",
+                "routing_method": "unified_state_machine"
             }
             
-            # Log successful routing
-            audit_utils.audit_log_event("routing_decision", {
+            # Log successful automated orchestration
+            audit_utils.audit_log_event("automated_orchestration_decision", {
                 "lead_id": lead.user_id,
-                "intent": classification.intent,
-                "confidence": classification.confidence,
                 "next_agent": next_agent,
-                "reasoning": classification.reasoning,
-                "compliance_passed": True
+                "orchestration_reason": orchestration_context.get("automation_reason"),
+                "automation_triggered": orchestration_context.get("auto_trigger", False),
+                "correlation_id": orchestration_context.get("correlation_id"),
+                "compliance_passed": True,
+                "routing_method": "automated_state_machine"
             })
+            
+            logger.info(f"✅ AUTOMATED ORCHESTRATION: {next_agent}")
+            logger.info(f"🤖 Reason: {orchestration_context.get('automation_reason')}")
             
             return state
             
         except Exception as e:
+            logger.error(f"❌ Automated orchestration failed: {str(e)}")
             return self._handle_router_error(state, e)
     
     async def _classify_intent(
@@ -387,35 +386,56 @@ Output your analysis as structured JSON matching the IntentClassification schema
     
 # Removed complex context building methods for simplification
 
-# Simplified conditional edge function for LangGraph routing
-def route_to_agent(state: AgentState) -> str:
+# Unified conditional edge function for LangGraph routing - FIXES PRIORITY 1 GAP 1.1
+async def route_to_agent(state: AgentState) -> str:
     """
-    Enhanced LangGraph conditional edge function for routing decisions.
+    Unified LangGraph conditional edge function using automated state machine orchestration.
     
-    Routes to appropriate agent based on conversation state, intent, and qualification stage.
+    CRITICAL: Replaces manual agent designation with automated state transitions.
+    This addresses Priority 1 Gap 1.1 - Agent Orchestration Integration Failure.
+    
+    Now uses Unified State Machine Coordinator for seamless agent handoffs
+    and T0+120s automation scenario completion.
     """
-    # Check if this is a warm-up conversation
-    lead = state["lead"]
-    conversation_state = get_conversation_state(lead.user_id) or {}
-    current_stage = conversation_state.get("stage", "")
-    
-    if current_stage == "warmup":
-        return "warmup"
-    
-    # Enhanced routing based on qualification stage
-    if lead.qualification_stage == "qualified":
-        return "scheduler"
-    elif lead.qualification_stage == "nurturing":
-        return "followup"
-    elif lead.qualification_stage == "disqualified":
-        return "offramp"
-    
-    # Check for value delivery intents
-    if "agent_decision" in state:
-        intent = state["agent_decision"].get("intent", "")
-        if intent in ["accept_lead_magnet", "decline_lead_magnet", "request_property_info",
-                     "ask_market_question", "value_delivery_request"]:
-            return "value_delivery"
-    
-    # Default: Route to qualifier for Instagram DM automation
-    return "qualifier"
+    try:
+        # Use unified state coordinator for automated routing
+        next_agent, orchestration_context = await unified_state_coordinator.orchestrate_agent_transition(
+            current_state=state,
+            trigger_event="langgraph_routing_decision"
+        )
+        
+        logger.info(f"🤖 AUTOMATED ORCHESTRATION: {next_agent}")
+        logger.info(f"📋 Context: {orchestration_context.get('automation_reason', 'N/A')}")
+        
+        # Update state with orchestration context for transparency
+        state["orchestration_context"] = orchestration_context
+        state["current_agent"] = next_agent
+        state["routing_method"] = "automated_state_machine"
+        
+        return next_agent
+        
+    except Exception as e:
+        logger.error(f"❌ Automated orchestration failed: {str(e)}")
+        
+        # Fallback to safe manual routing on orchestration failure
+        logger.warning("🔄 Falling back to manual routing")
+        
+        lead = state["lead"]
+        
+        # CRITICAL: Qualifier-only mode enforcement for pilot fallback
+        settings = get_settings()
+        if settings.QUALIFIER_ONLY_MODE:
+            if lead.qualification_stage == "qualified":
+                return "scheduler"
+            else:
+                return "qualifier"
+        
+        # Fallback manual routing logic
+        if lead.qualification_stage == "qualified":
+            return "scheduler"
+        elif lead.qualification_stage == "nurturing":
+            return "followup"
+        elif lead.qualification_stage == "disqualified":
+            return "offramp"
+        else:
+            return "qualifier"

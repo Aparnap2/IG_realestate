@@ -243,10 +243,14 @@ class LangGraphProactiveEngagement:
                 temporal_analysis, momentum_analysis, completeness_analysis
             )
             
-            # Calculate confidence score
-            confidence_score = self._calculate_confidence_score(
-                temporal_analysis, momentum_analysis, completeness_analysis
-            )
+            # Calculate confidence score with robust error handling
+            try:
+                confidence_score = self._calculate_confidence_score(
+                    temporal_analysis, momentum_analysis, completeness_analysis
+                )
+            except Exception as e:
+                self.logger.error(f"Error calculating confidence score: {str(e)}")
+                confidence_score = 0.5  # Safe default
             
             context_analysis = {
                 "user_id": user_id,
@@ -1057,20 +1061,23 @@ class LangGraphProactiveEngagement:
         momentum_analysis: Dict[str, Any],
         completeness_analysis: Dict[str, Any]
     ) -> float:
-        """Calculate confidence score for the analysis."""
+        """Calculate confidence score for the analysis with robust error handling."""
         try:
             confidence = 0.0
             
             # Temporal confidence (based on data availability)
-            if temporal_analysis["last_interaction_time"]:
+            if temporal_analysis.get("last_interaction_time"):
                 confidence += 0.3
             
-            # Momentum confidence (based on message history)
-            if momentum_analysis["message_analysis"]["total_messages"] > 5:
+            # Momentum confidence (based on message history) - with safe access
+            message_analysis = momentum_analysis.get("message_analysis", {})
+            total_messages = message_analysis.get("total_messages", 0)
+            if isinstance(total_messages, (int, float)) and total_messages > 5:
                 confidence += 0.3
             
             # Completeness confidence (based on available lead info)
-            if completeness_analysis["completeness_score"] > 0:
+            completeness_score = completeness_analysis.get("completeness_score", 0)
+            if isinstance(completeness_score, (int, float)) and completeness_score > 0:
                 confidence += 0.4
             
             return min(1.0, confidence)
