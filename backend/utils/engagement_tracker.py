@@ -177,95 +177,56 @@ class EngagementTracker:
     
     def calculate_engagement_momentum(self, user_id: str) -> float:
         """
-        Calculate engagement momentum score (0-1) based on multiple factors.
+        Calculate simple engagement momentum score (0-1) using rule-based patterns.
         
-        Factors considered:
-        - Recency: More recent touches weighted higher
-        - Frequency: Consistent engagement over time
-        - Diversity: Multiple types of interactions
-        - Progression: Moving through qualification stages
-        - Response Rate: User responsiveness to outreach
+        Pure agentic AI approach - no ML or complex scoring algorithms.
         
         Args:
             user_id: Unique user identifier
             
         Returns:
-            Engagement momentum score between 0 and 1
+            Simple engagement momentum score between 0 and 1
         """
         if self.redis_client is None:
             logger.warning("Redis unavailable - cannot calculate momentum")
-            return 0.0
+            return 0.5  # Neutral score when Redis unavailable
         
-        # Check cache first
-        cache_key = self.MOMENTUM_KEY.format(user_id=user_id)
-        
-        def _calculate_operation():
-            # Try to get cached value
-            cached_momentum = self.redis_client.get(cache_key)
-            if cached_momentum:
-                return float(cached_momentum)
-            
-            touch_key = self.TOUCH_POINTS_KEY.format(user_id=user_id)
-            
-            # Get all touch points from last 30 days
-            cutoff_time = datetime.utcnow() - timedelta(days=30)
-            cutoff_score = cutoff_time.timestamp()
-            
-            touch_data = self.redis_client.zrangebyscore(
-                touch_key, cutoff_score, "+inf", withscores=True
-            )
-            
-            if not touch_data:
-                momentum = 0.0
-                self.redis_client.setex(cache_key, self.MOMENTUM_TTL, momentum)
-                return momentum
-            
-            # Parse touch points
-            touch_points = []
-            for data, score in touch_data:
-                try:
-                    touch_dict = json.loads(data)
-                    touch_points.append(touch_dict)
-                except json.JSONDecodeError:
-                    continue
-            
-            # Calculate momentum factors
-            
-            # 1. Recency Score (0-1)
-            recency_score = self._calculate_recency_score(touch_points)
-            
-            # 2. Frequency Score (0-1)
-            frequency_score = self._calculate_frequency_score(touch_points)
-            
-            # 3. Diversity Score (0-1)
-            diversity_score = self._calculate_diversity_score(touch_points)
-            
-            # 4. Progression Score (0-1)
-            progression_score = self._calculate_progression_score(touch_points)
-            
-            # 5. Response Rate Score (0-1)
-            response_score = self._calculate_response_score(touch_points)
-            
-            # Weighted combination
-            momentum = (
-                recency_score * 0.3 +
-                frequency_score * 0.25 +
-                diversity_score * 0.2 +
-                progression_score * 0.15 +
-                response_score * 0.1
-            )
-            
-            # Cache the result
-            self.redis_client.setex(cache_key, self.MOMENTUM_TTL, momentum)
-            
-            logger.info(f"Calculated engagement momentum {momentum:.3f} for user {user_id}")
-            return momentum
-        
+        # Simple rule-based momentum calculation
         try:
-            return self.circuit_breaker.call(_calculate_operation)
+            touch_count = self.get_touch_count(user_id, days=7)
+            recent_count = self.get_touch_count(user_id, days=1)
+            
+            # Simple rule-based scoring
+            momentum = 0.3  # Base engagement
+            
+            # Recent activity bonus
+            if recent_count > 0:
+                momentum += 0.3  # Activity today
+            elif touch_count > 3:
+                momentum += 0.2  # Active this week
+            elif touch_count > 0:
+                momentum += 0.1  # Some recent activity
+            
+            # Conversation depth bonus
+            history = self.get_touch_history(user_id, limit=10)
+            if len(history) >= 3:
+                momentum += 0.2  # Multiple touch points
+            elif len(history) >= 1:
+                momentum += 0.1  # Some conversation history
+            
+            # Response pattern bonus
+            response_count = sum(1 for touch in history if touch.get("response_received", False))
+            if response_count > 0:
+                momentum += 0.1  # User responds to outreach
+            
+            final_momentum = min(momentum, 1.0)
+            
+            logger.info(f"Simple engagement momentum: {final_momentum:.3f} for user {user_id}")
+            return final_momentum
+            
         except Exception as e:
-            logger.error(f"Failed to calculate momentum for user {user_id}: {e}")
-            return 0.0
+            logger.error(f"Failed to calculate simple momentum for user {user_id}: {e}")
+            return 0.3  # Safe default on error
     
     def should_convert_soon(self, user_id: str, industry_type: str) -> bool:
         """
