@@ -47,7 +47,7 @@ from .llm_client import (
     get_llm_response
 )
 from .proactive_engagement import (
-    LangGraphProactiveEngagement,
+    SimpleProactiveEngagement,
     ProactiveEngagementConfig,
     EngagementStrategy
 )
@@ -319,6 +319,8 @@ class ProactiveEngagementEnhanced:
         
         self.intervention_history = {}
         self.engagement_tracker = {}
+        self.config = ProactiveEngagementConfig()
+        self.engine = SimpleProactiveEngagement(self.config)
     
     async def analyze_engagement_opportunity(
         self,
@@ -328,41 +330,39 @@ class ProactiveEngagementEnhanced:
         """Analyze if proactive engagement is needed."""
         user_id = state.user_id
         
-        # Check inactivity threshold
-        if time_since_last_activity < self.thresholds["inactivity_minutes"]:
-            return False, EngagementStrategy.BASIC_FOLLOWUP, "Active conversation"
-        
-        # Check intervention limits
-        now = datetime.utcnow()
-        today = now.date()
-        hour_ago = now - timedelta(hours=1)
-        
-        user_history = self.intervention_history.get(user_id, [])
-        today_interventions = [
-            h for h in user_history 
-            if datetime.fromisoformat(h["timestamp"]).date() == today
-        ]
-        hour_interventions = [
-            h for h in user_history 
-            if datetime.fromisoformat(h["timestamp"]) > hour_ago
-        ]
-        
-        if len(today_interventions) >= self.thresholds["max_interventions_per_day"]:
-            return False, EngagementStrategy.BASIC_FOLLOWUP, "Daily limit reached"
-        
-        if len(hour_interventions) >= self.thresholds["max_interventions_per_hour"]:
-            return False, EngagementStrategy.BASIC_FOLLOWUP, "Hourly limit reached"
-        
-        # Determine engagement strategy based on state
-        missing_info = len([k for k, v in state.lead_info.items() if not v])
-        qualification_score = state.extraction_confidence
-        
-        if missing_info >= 3 and qualification_score < 0.5:
-            return True, EngagementStrategy.SIMPLE_CLARIFICATION, "Missing critical info"
-        elif time_since_last_activity > 120:  # 2+ hours
-            return True, EngagementStrategy.INACTIVITY_REENGAGEMENT, "Extended inactivity"
-        else:
-            return True, EngagementStrategy.BASIC_FOLLOWUP, "Standard re-engagement"
+        try:
+            # Convert state to dict format for the simple engine
+            current_state = {
+                "lead": state.lead_info,
+                "current_stage": state.current_stage,
+                "extraction_confidence": state.extraction_confidence
+            }
+            
+            # Use simple proactive engagement engine
+            context_analysis = await self.engine.analyze_conversation_context(
+                user_id=user_id,
+                current_state=current_state,
+                conversation_history=state.conversation_history
+            )
+            
+            strategy = context_analysis.get("recommended_strategy", EngagementStrategy.BASIC_FOLLOWUP)
+            
+            # Check if intervention is needed based on temporal analysis
+            temporal = context_analysis.get("temporal_analysis", {})
+            needs_followup = temporal.get("needs_followup", False)
+            
+            if needs_followup:
+                return True, strategy, f"Temporal analysis indicates followup needed: {temporal.get('pattern', 'unknown')}"
+            else:
+                return False, strategy, "No followup needed based on temporal analysis"
+                
+        except Exception as e:
+            logger.error(f"Error in engagement opportunity analysis: {e}")
+            # Fallback to simple rule-based analysis
+            if time_since_last_activity < self.thresholds["inactivity_minutes"]:
+                return False, EngagementStrategy.BASIC_FOLLOWUP, "Active conversation"
+            else:
+                return True, EngagementStrategy.INACTIVITY_REENGAGEMENT, "Extended inactivity detected"
     
     async def generate_proactive_intervention(
         self,
@@ -371,37 +371,54 @@ class ProactiveEngagementEnhanced:
     ) -> Dict[str, Any]:
         """Generate proactive intervention based on strategy."""
         
-        intervention = {
-            "strategy": strategy.value,
-            "timestamp": datetime.utcnow().isoformat(),
-            "user_id": state.user_id,
-            "thread_id": state.thread_id,
-            "current_stage": state.current_stage,
-            "approach": "",
-            "message_style": "helpful",
-            "context_aware": True
-        }
-        
-        if strategy == EngagementStrategy.INACTIVITY_REENGAGEMENT:
+        try:
+            # Convert state to dict format for the simple engine
+            current_state = {
+                "lead": state.lead_info,
+                "current_stage": state.current_stage,
+                "extraction_confidence": state.extraction_confidence
+            }
+            
+            # Create context analysis
+            context_analysis = {
+                "recommended_strategy": strategy,
+                "temporal_analysis": {"pattern": "enhanced_analysis"},
+                "engagement_analysis": {"engagement_level": "medium"},
+                "completeness_analysis": {"needs_info": len(state.lead_info) < 3}
+            }
+            
+            # Use simple proactive engagement engine
+            intervention = await self.engine.generate_proactive_intervention(
+                user_id=state.user_id,
+                context_analysis=context_analysis,
+                current_state=current_state
+            )
+            
+            # Enhance with enhanced system metadata
             intervention.update({
-                "approach": "gentle_reengagement",
-                "message_style": "warm_and_supportive",
-                "trigger": "extended_inactivity"
+                "thread_id": state.thread_id,
+                "current_stage": state.current_stage,
+                "context_aware": True,
+                "enhanced_mode": True
             })
-        elif strategy == EngagementStrategy.SIMPLE_CLARIFICATION:
-            intervention.update({
-                "approach": "progressive_disclosure",
-                "message_style": "informative_and_helpful",
-                "trigger": "missing_information"
-            })
-        else:
-            intervention.update({
-                "approach": "value_oriented",
-                "message_style": "professional_and_engaging",
-                "trigger": "standard_engagement"
-            })
-        
-        return intervention
+            
+            return intervention
+            
+        except Exception as e:
+            logger.error(f"Error generating proactive intervention: {e}")
+            # Fallback intervention
+            return {
+                "strategy": strategy.value,
+                "timestamp": datetime.utcnow().isoformat(),
+                "user_id": state.user_id,
+                "thread_id": state.thread_id,
+                "current_stage": state.current_stage,
+                "approach": "fallback_engagement",
+                "message_style": "helpful",
+                "context_aware": False,
+                "enhanced_mode": False,
+                "error": str(e)
+            }
 
 class SupervisorWorkerOrchestrator:
     """Advanced supervisor-worker orchestrator with LangGraph patterns."""

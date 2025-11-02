@@ -25,13 +25,11 @@ load_dotenv()
 from .proactive_validation import validate_proactive_engagement_conditions, PreconditionResult, get_validator
 from config.settings import get_settings
 
-# Import LangGraph-enhanced proactive engagement system
+# Import simplified proactive engagement system
 from .proactive_engagement import (
-    LangGraphProactiveEngagement,
+    SimpleProactiveEngagement,
     ProactiveEngagementConfig,
-    analyze_conversation_context,
-    generate_proactive_intervention,
-    execute_intervention_with_langgraph
+    EngagementStrategy
 )
 
 # Import proactive response engine
@@ -131,6 +129,7 @@ class RedisCheckpointManager:
         self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.checkpointer = None
         self.namespace = "llm_client"
+        self.logger = logging.getLogger(__name__)
         self._initialize_checkpointer()
     
     def _initialize_checkpointer(self):
@@ -138,12 +137,12 @@ class RedisCheckpointManager:
         if LANGGRAPH_AVAILABLE and RedisSaver:
             try:
                 self.checkpointer = RedisSaver.from_conn_string(self.redis_url)
-                logger.info("✅ Redis checkpointer initialized successfully")
+                self.logger.info("✅ Redis checkpointer initialized successfully")
             except Exception as e:
-                logger.warning(f"⚠️ Redis checkpointer initialization failed: {e}")
+                self.logger.warning(f"⚠️ Redis checkpointer initialization failed: {e}")
                 self.checkpointer = None
         else:
-            logger.info("📦 LangGraph not available - using fallback checkpoint management")
+            self.logger.info("📦 LangGraph not available - using fallback checkpoint management")
     
     async def save_checkpoint(
         self,
@@ -1541,9 +1540,9 @@ async def generate_langgraph_fallback_response(prompt: str, lead_info: Dict[str,
         lead_info = {}
     
     try:
-        # Initialize LangGraph proactive engagement system
+        # Initialize simple proactive engagement system
         config = ProactiveEngagementConfig()
-        engine = LangGraphProactiveEngagement(config)
+        engine = SimpleProactiveEngagement(config)
         
         # Build current state for LangGraph analysis
         current_state = {
@@ -1556,28 +1555,28 @@ async def generate_langgraph_fallback_response(prompt: str, lead_info: Dict[str,
             "last_prompt": prompt
         }
         
-        # Analyze conversation context using LangGraph
+        # Analyze conversation context using simple proactive engagement
         context_analysis = await engine.analyze_conversation_context(
             user_id=user_id or "unknown",
             current_state=current_state
         )
         
-        # Generate proactive intervention using LangGraph
+        # Generate proactive intervention using simple proactive engagement
         intervention = await engine.generate_proactive_intervention(
             user_id=user_id or "unknown",
             context_analysis=context_analysis,
             current_state=current_state
         )
         
-        # Execute intervention with LangGraph state management
-        execution_result = await engine.execute_intervention_with_langgraph(
+        # Execute intervention with simple state management
+        execution_result = await engine.execute_simple_intervention(
             user_id=user_id or "unknown",
             intervention=intervention,
             current_state=current_state
         )
         
-        # Generate response based on LangGraph intervention results
-        strategy = intervention.get('strategy', 'context_aware_suggestion')
+        # Generate response based on proactive intervention results
+        strategy = intervention.get('strategy', 'basic_followup')
         approach = intervention.get('approach', 'helpful')
         message_style = intervention.get('message_style', 'helpful')
         
@@ -1625,15 +1624,15 @@ async def generate_langgraph_fallback_response(prompt: str, lead_info: Dict[str,
             Make it personal based on their extracted information.
             """
         
-        # Try to get LLM response with LangGraph-enhanced prompt
+        # Try to get LLM response with enhanced prompt
         try:
             llm_response = await get_llm_response(langgraph_prompt, timeout=10)
             if llm_response and len(llm_response) > 20:  # Valid response
                 return llm_response
         except Exception as e:
-            logger.warning(f"LLM failed in LangGraph fallback: {e}")
+            logger.warning(f"LLM failed in proactive engagement fallback: {e}")
         
-        # Fallback to intelligent template based on LangGraph analysis
+        # Fallback to intelligent template based on proactive analysis
         return await generate_intelligent_template_fallback(lead_info, strategy, approach, agent_type)
         
     except Exception as e:
