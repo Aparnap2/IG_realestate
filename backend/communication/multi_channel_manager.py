@@ -13,17 +13,19 @@ Intelligent multi-channel communication for lead nurturing with:
 import logging
 import json
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Union, Tuple
+from typing import Dict, List, Optional, Any, Union, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, asdict
 from enum import Enum
 
 # Local imports
-from utils.redis_client import redis_client, redis_circuit_breaker
-from utils.engagement_tracker import engagement_tracker
-from utils.response_tracker import response_tracker
-from utils.llm_client import get_llm_response_sync
-from utils.audit import audit_log_event
-from ..middleware.compliance_enforcement import compliance_enforcement
+from backend.utils.redis_client import redis_client, redis_circuit_breaker
+from backend.utils.engagement_tracker import engagement_tracker
+from backend.utils.response_tracker import response_tracker
+from backend.utils.llm_client import get_llm_response_sync
+from backend.utils.audit import audit_log_event
+
+if TYPE_CHECKING:
+    from backend.middleware.compliance_enforcement import ComplianceEnforcementMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +95,7 @@ class MultiChannelManager:
     def __init__(self):
         self.redis_client = redis_client
         self.circuit_breaker = redis_circuit_breaker
+        self._compliance_enforcement: Optional["ComplianceEnforcementMiddleware"] = None
         
         # Redis key patterns
         self.USER_PREFERENCES_KEY = "comm:preferences:{user_id}"
@@ -135,8 +138,8 @@ class MultiChannelManager:
             "Asia/Kolkata": {"start": 10, "end": 19}  # 10 AM - 7 PM IST
         }
     
-async def send_message(self, user_id: str, message: str, channel: str = "auto",
-                   priority: str = "normal", message_type: str = "engagement") -> Dict[str, Any]:
+    async def send_message(self, user_id: str, message: str, channel: str = "auto",
+                       priority: str = "normal", message_type: str = "engagement") -> Dict[str, Any]:
         """
         Send message via optimal channel with mandatory compliance enforcement.
         
@@ -169,8 +172,12 @@ async def send_message(self, user_id: str, message: str, channel: str = "auto",
             
             # CRITICAL: Use mandatory compliance gate for ALL messages
             logger.info(f"🔒 ENFORCING COMPLIANCE for message to {user_id}")
-            
-            compliance_success, compliance_result = await compliance_enforcement.send_compliant_message(
+
+            if self._compliance_enforcement is None:
+                from backend.middleware.compliance_enforcement import compliance_enforcement
+                self._compliance_enforcement = compliance_enforcement
+
+            compliance_success, compliance_result = await self._compliance_enforcement.send_compliant_message(
                 lead_id=user_id,
                 message=message,
                 channel=optimal_channel.value,
@@ -181,7 +188,7 @@ async def send_message(self, user_id: str, message: str, channel: str = "auto",
                     "user_preferences": user_prefs.__dict__
                 }
             )
-            
+
             # Block non-compliant messages
             if not compliance_success:
                 return {

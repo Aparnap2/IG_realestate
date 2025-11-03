@@ -7,8 +7,8 @@ import pytz
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from utils.supabase_client import save_lead
-from tools.handoffs import handoff_to_followup, handoff_to_end
-from schemas.state import AgentState
+from backend.tools.handoffs import handoff_to_followup, handoff_to_end
+from backend.schemas.state import AgentState
 from typing import Dict, Any, List
 import os
 import math

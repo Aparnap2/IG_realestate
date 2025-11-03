@@ -442,3 +442,85 @@ def calculate_lead_score(lead_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         message=lead_data.get('message'),
         **kwargs
     )
+
+def get_next_qualification_question(lead_data: Dict[str, Any], asked_questions: List[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Determine the next qualification question to ask based on missing information.
+    
+    Args:
+        lead_data: Lead information dictionary
+        asked_questions: List of questions already asked
+        
+    Returns:
+        Dictionary with next question information, or None if no more questions needed
+    """
+    if asked_questions is None:
+        asked_questions = []
+    
+    # Define qualification questions in order of importance
+    qualification_questions = [
+        {
+            "field": "budget",
+            "question": "What's your budget range for this property?",
+            "required": True,
+            "weight": 0.3
+        },
+        {
+            "field": "location",
+            "question": "Which areas or neighborhoods are you most interested in?",
+            "required": True,
+            "weight": 0.25
+        },
+        {
+            "field": "property_type",
+            "question": "What type of property are you looking for? (house, condo, apartment, etc.)",
+            "required": False,
+            "weight": 0.15
+        },
+        {
+            "field": "timeline",
+            "question": "What's your timeline for purchasing?",
+            "required": False,
+            "weight": 0.15
+        },
+        {
+            "field": "desired_bedrooms",
+            "question": "How many bedrooms are you looking for?",
+            "required": False,
+            "weight": 0.1
+        },
+        {
+            "field": "email",
+            "question": "Could you share your email so I can send you specific listings?",
+            "required": False,
+            "weight": 0.05
+        }
+    ]
+    
+    # Check what information is missing
+    missing_fields = []
+    for q in qualification_questions:
+        field = q["field"]
+        if field not in asked_questions:
+            # Check if field has valid data
+            value = lead_data.get(field)
+            if field == "budget":
+                # Budget must be > 0
+                if not value or (isinstance(value, (int, str)) and int(value) <= 0):
+                    missing_fields.append(q)
+            elif field == "email":
+                # Email must contain @
+                if not value or "@" not in str(value):
+                    missing_fields.append(q)
+            else:
+                # Other fields must not be empty
+                if not value or not str(value).strip():
+                    missing_fields.append(q)
+    
+    # Return the highest priority missing question
+    if missing_fields:
+        # Sort by weight (descending) to get most important first
+        missing_fields.sort(key=lambda x: x["weight"], reverse=True)
+        return missing_fields[0]
+    
+    return None

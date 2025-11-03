@@ -13,8 +13,8 @@ from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from .redis_client import create_redis_client
-from ..config.settings import get_settings
+from redis_client import create_redis_client
+from config.settings import get_settings
 
 async def get_redis_client():
     """Wrapper to get Redis client."""

@@ -125,8 +125,9 @@ celery_app.conf.update(
     worker_log_color=False,
 )
 
-# Auto-discover tasks
-celery_app.autodiscover_tasks(["backend.tasks"])
+# CRITICAL FIX: Remove auto-discovery to prevent relative import issues
+# Tasks will be imported manually as needed
+# celery_app.autodiscover_tasks(["backend.tasks"])
 
 # Signal handlers for database connection management
 @worker_init.connect

@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # LLM / OpenRouter
     OPENROUTER_API_KEY: Optional[str] = None
     # Preferred model env name per llm_client usage
-    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", " nvidia/nemotron-nano-12b-v2-vl:free")
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", " openai/gpt-oss-20b:free")
     # Backward-compat alias (some components might read LLM_MODEL)
     LLM_MODEL: Optional[str] = os.getenv("LLM_MODEL", None)
     

@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from langgraph.types import Command
 from langgraph.prebuilt import tool_node
-from schemas.state import AgentState
+from backend.schemas.state import AgentState
 from typing import Annotated
 
 def handoff_to_scheduler(state: Annotated[AgentState, "InjectedState"], tool_call_id: str) -> Command:

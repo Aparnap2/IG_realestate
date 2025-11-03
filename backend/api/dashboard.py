@@ -18,16 +18,24 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
+import sys
+import os
+
+# CRITICAL FIX: Add backend directory to Python path for proper imports
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ..utils.observability import ObservabilityMetrics
-from ..utils.audit import audit_log_event
-from ..booking.observability_metrics import BookingObservabilityMetrics
-from ..agents.unified_state_coordinator import unified_state_coordinator
-from ..middleware.compliance_enforcement import compliance_enforcement
-from ..communication.multi_channel_manager import multi_channel_manager
+from utils.observability import ObservabilityMetrics
+from utils.audit import audit_log_event
+from booking.observability_metrics import BookingObservabilityMetrics
+from agents.unified_state_coordinator import unified_state_coordinator
+from middleware.compliance_enforcement import compliance_enforcement
+from communication.multi_channel_manager import multi_channel_manager
 
 logger = logging.getLogger(__name__)
 

@@ -27,8 +27,8 @@ from pydantic import BaseModel, Field
 # Add the parent directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from schemas.state import AgentState
-from tools import compliance as compliance_tools
+from backend.schemas.state import AgentState
+from backend.tools import compliance as compliance_tools
 from tools.agent_tools import send_instagram_message
 import utils.audit as audit_utils
 from config.settings import get_settings
@@ -101,7 +101,7 @@ class RouterAgent:
             "value": ["guide", "checklist", "ebook", "download", "resource", "tips", "help", "advice"]
         }
     
-async def process(self, state: AgentState) -> Dict[str, Any]:
+    async def process(self, state: AgentState) -> Dict[str, Any]:
         """
         Process incoming message through unified state machine orchestration.
         

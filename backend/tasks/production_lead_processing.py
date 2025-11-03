@@ -17,13 +17,14 @@ from typing import Dict, Any, Optional
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from utils.supabase_client import save_or_update_lead, query_properties_db
-from utils.audit import audit_log_event
-from temporal.graph_client import get_graphiti_client
-from utils.llm_client import extract_lead_info, generate_response_message
-from utils.enhanced_llm_extraction import enhanced_extract_lead_info
-from tools.compliance import fair_housing_evaluator
-from utils.redis_client import (
+from backend.utils.supabase_client import save_or_update_lead, query_properties_db
+from backend.utils.audit import audit_log_event
+from backend.temporal.graph_client import get_graphiti_client
+from backend.utils.llm_client import extract_lead_info, generate_response_message
+from backend.utils.enhanced_llm_extraction import enhanced_extract_lead_info
+from backend.tools.compliance import fair_housing_evaluator
+from backend.agents.proactive_property_search import run_proactive_property_search
+from backend.utils.redis_client import (
     store_thread_state,
     get_thread_state,
     get_temporary_data,
@@ -36,10 +37,10 @@ from utils.redis_client import (
     get_current_question,
     set_current_question,
 )
-from tools import agent_tools
-from utils.lead_scoring import calculate_lead_score, get_next_qualification_question, lead_scorer
+from backend.tools import agent_tools
+from backend.utils.lead_scoring import calculate_lead_score, get_next_qualification_question, lead_scorer
 # Removed old booking_flow import - now using new Self-Driving Booking Ops 2.0
-from integrations.hubspot_client import sync_lead_to_hubspot, sync_conversation_to_hubspot
+from backend.integrations.hubspot_client import sync_lead_to_hubspot, sync_conversation_to_hubspot
 # from agents.prd_compliant_workflow import extract_user_profile  # Temporarily disabled
 
 
@@ -115,7 +116,7 @@ class ProductionLeadProcessor:
             print(f"🤖 ENHANCED LLM EXTRACTION: Using intelligent context-aware extraction")
             try:
                 # Use enhanced extraction with conversation context
-                extracted_info = enhanced_extract_lead_info(
+                extracted_info = await enhanced_extract_lead_info(
                     message=message,
                     user_id=user_id,
                     prior_data=prior_lead
@@ -311,21 +312,54 @@ class ProductionLeadProcessor:
                     "booking_flow": True
                 }
 
-            # Step 7: Property search if criteria provided
+            # Step 7: Proactive Property Search using pure agentic AI
+            print(f"🏠 PROACTIVE PROPERTY SEARCH: Using LLM intelligence for autonomous decisions")
             properties = []
-            budget = self._safe_int_convert(lead_data.get("budget", 0))
-            location = lead_data.get("location")
-            if budget > 0 and location:
-                print(f"🏠 PROPERTY SEARCH: Using LLM function calling to query database")
-                properties = query_properties_db(
-                    budget=budget,
-                    location=location,
-                    property_type=lead_data.get("property_type", "")
+            proactive_search_result = {}
+            
+            try:
+                proactive_search_result = await run_proactive_property_search(
+                    message=message,
+                    lead_data=current_lead_data,
+                    prior_context=prior_state.get("db_results", {})
                 )
-                print(f"✅ Found {len(properties)} matching properties")
-            else:
-                print(f"⚠️ Insufficient criteria for property search")
-                print(f"   📋 Budget: {lead_data.get('budget', 0)}, Location: '{lead_data.get('location', '')}', Type: '{lead_data.get('property_type', '')}'")
+                
+                if proactive_search_result.get("status") == "success":
+                    properties = proactive_search_result.get("properties", [])
+                    print(f"✅ Proactive search completed: {len(properties)} properties found")
+                    
+                    # If proactive search found properties, update routing based on sales intelligence
+                    if properties:
+                        routing_decision = proactive_search_result.get("routing_decision", {})
+                        if routing_decision.get("recommended_agent"):
+                            next_agent = routing_decision["recommended_agent"]
+                            print(f"🎯 SALES INTELLIGENCE: Proactive search suggests routing to {next_agent}")
+                            print(f"   💭 Reasoning: {routing_decision.get('routing_reasoning', 'N/A')}")
+                else:
+                    print(f"⚠️ Proactive search failed, using fallback property search")
+                    # Fallback to traditional search if proactive fails
+                    budget = self._safe_int_convert(lead_data.get("budget", 0))
+                    location = lead_data.get("location")
+                    if budget > 0 and location:
+                        properties = query_properties_db(
+                            budget=budget,
+                            location=location,
+                            property_type=lead_data.get("property_type", "")
+                        )
+                        print(f"✅ Fallback search completed: {len(properties)} properties found")
+                        
+            except Exception as e:
+                print(f"⚠️ Proactive property search error: {e}, using fallback")
+                # Fallback to traditional search
+                budget = self._safe_int_convert(lead_data.get("budget", 0))
+                location = lead_data.get("location")
+                if budget > 0 and location:
+                    properties = query_properties_db(
+                        budget=budget,
+                        location=location,
+                        property_type=lead_data.get("property_type", "")
+                    )
+                    print(f"✅ Fallback search completed: {len(properties)} properties found")
 
             # Step 8: Route to next agent per enhanced workflow thresholds
             routing = scoring_result['routing_recommendation']
@@ -505,7 +539,8 @@ class ProductionLeadProcessor:
                 "qualification": scoring_result,
                 "next_agent": next_agent,
                 "compliance": {"passed": compliance_result.get("passed", False)},
-                "routing": routing
+                "routing": routing,
+                "proactive_search": proactive_search_result
             }
 
             store_thread_state(f"langgraph:thread:{user_id}", state_data)
@@ -527,7 +562,8 @@ class ProductionLeadProcessor:
                 "next_agent": next_agent,
                 "properties_found": len(properties),
                 "compliance_passed": compliance_result.get("passed", False),
-                "routing_recommendation": routing
+                "routing_recommendation": routing,
+                "proactive_search_result": proactive_search_result
             }
 
         except Exception as e:

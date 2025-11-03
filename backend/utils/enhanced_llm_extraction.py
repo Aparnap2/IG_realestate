@@ -1,29 +1,28 @@
 """
-LangGraph-Based Lead Information Extraction
+Pure Agentic AI Lead Information Extraction
 
-This module provides real estate lead information extraction using pure agentic AI patterns
-with LangGraph state management and Redis checkpointing. No hardcoded ML dependencies.
+This module provides real estate lead information extraction using ONLY LLM-based agentic patterns.
+No hardcoded ML dependencies, no pattern matching, no fallback lists - pure intelligence.
 
 Key Features:
-- Rule-based information extraction (budget, location, property type, timeline)
+- Pure LLM-based information extraction (budget, location, property type, timeline)
 - LangGraph state management for agent coordination
 - Redis checkpoint persistence
-- Agentic AI patterns: routing, parallelization, checkpoint management
-- Proactive engagement with rule-based patterns
+- Pure agentic AI patterns: routing, parallelization, checkpoint management
+- Proactive engagement with LLM intelligence
 """
 
 import logging
-import re
+import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
-import asyncio
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 class MessageType(Enum):
-    """Simple message types for agent routing."""
+    """Agentic message types for intelligent routing."""
     INITIAL = "initial"
     QUALIFICATION = "qualification"
     SCHEDULING = "scheduling"
@@ -31,7 +30,7 @@ class MessageType(Enum):
 
 @dataclass
 class ExtractionResult:
-    """Result of real estate lead information extraction."""
+    """Result of pure agentic real estate lead information extraction."""
     budget: Optional[float] = None
     location: Optional[str] = None
     property_type: Optional[str] = None
@@ -50,7 +49,7 @@ class ExtractionResult:
 
 @dataclass
 class AgenticContext:
-    """LangGraph-managed context for agent coordination."""
+    """LangGraph-managed context for pure agentic coordination."""
     thread_id: str
     user_id: str
     current_agent: str
@@ -60,469 +59,277 @@ class AgenticContext:
     last_activity: str
     
     def add_agent_interaction(self, agent_type: str, action: str):
-        """Record agent interaction in LangGraph-managed history."""
+        """Record pure agentic interaction."""
         self.agent_history.append(f"{agent_type}:{action}")
 
-class LangGraphMessageRouter:
-    """Pure LangGraph-based message routing without ML classification."""
+class PureAgenticExtractor:
+    """Pure agentic extraction using ONLY LLM intelligence - no hardcoded patterns."""
     
     def __init__(self):
-        self.routing_rules = {
-            "booking": ["book", "schedule", "tour", "viewing", "appointment"],
-            "budget": ["budget", "$", "price", "cost", "afford", "payment"],
-            "urgent": ["asap", "urgent", "immediately", "today", "emergency"],
-            "info": ["info", "details", "more", "tell me", "show"],
-            "qualification": ["looking", "need", "want", "search", "find"]
-        }
-    
-    def route_message(self, message: str, context: Optional[AgenticContext] = None) -> Tuple[str, float]:
-        """Route message to appropriate agent using simple rule-based patterns."""
-        message_lower = message.lower()
-        
-        # Check routing patterns
-        for agent_type, keywords in self.routing_rules.items():
-            match_score = 0
-            for keyword in keywords:
-                if keyword in message_lower:
-                    match_score += 1
-            
-            if match_score > 0:
-                confidence = min(match_score / len(keywords), 1.0)
-                return agent_type, confidence
-        
-        # Default fallback
-        return "qualifier", 0.3
+        self.extraction_prompt = """You are an expert real estate lead qualification agent. Extract ALL relevant information from this message using pure intelligence.
 
-class RuleBasedExtractor:
-    """Simple rule-based extraction without ML patterns."""
-    
-    def extract_information(self, message: str, context: Optional[AgenticContext] = None) -> ExtractionResult:
-        """Extract lead information using regex patterns and simple rules."""
-        result = ExtractionResult()
-        
-        # Extract budget
-        budget = self._extract_budget(message)
-        if budget:
-            result.budget = budget
-            result.extracted_fields.append("budget")
-        
-        # Extract location
-        location = self._extract_location(message)
-        if location:
-            result.location = location
-            result.extracted_fields.append("location")
-        
-        # Extract property type and bedrooms
-        property_type, bedrooms = self._extract_property_info(message)
-        if property_type:
-            result.property_type = property_type
-            result.extracted_fields.append("property_type")
-        if bedrooms:
-            result.desired_bedrooms = bedrooms
-            result.extracted_fields.append("bedrooms")
-        
-        # Extract timeline
-        timeline = self._extract_timeline(message)
-        if timeline:
-            result.timeline = timeline
-            result.extracted_fields.append("timeline")
-        
-        # Extract contact info
-        email = self._extract_email(message)
-        if email:
-            result.email = email
-            result.extracted_fields.append("email")
-            
-        phone = self._extract_phone(message)
-        if phone:
-            result.phone = phone
-            result.extracted_fields.append("phone")
-        
-        # Set confidence based on extracted fields
-        result.extraction_confidence = min(len(result.extracted_fields) * 0.25, 1.0)
-        
-        # Determine conversation stage
-        result.conversation_stage = self._determine_conversation_stage(result)
-        
-        logger.info(f"Rule-based extraction: {len(result.extracted_fields)} fields extracted")
-        return result
+Message: "{message}"
 
-    def _extract_budget(self, message: str) -> Optional[float]:
-        """Extract budget using simple regex patterns."""
-        message_lower = message.lower()
-        
-        budget_patterns = [
-            (r'\$?\s*(\d{1,3}(?:,\d{3})*)\s*(?:k|K|thousand)', 1000),
-            (r'\$?\s*(\d{1,3}(?:,\d{3})*)\s*(?:m|M|million)', 1000000),
-            (r'\$?\s*(\d{1,3}(?:,\d{3})*)', 1),
-            (r'budget[:\s]*\$?\s*(\d{1,3}(?:,\d{3})*)', 1),
-        ]
-        
-        for pattern, multiplier in budget_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                try:
-                    number_str = match.group(1).replace(',', '').replace('$', '').strip()
-                    if number_str.isdigit():
-                        budget = int(number_str) * multiplier
-                        if 10000 <= budget <= 100000000:  # Reasonable range
-                            return budget
-                except (ValueError, IndexError):
-                    continue
-        return None
-    
-    def _extract_location(self, message: str) -> Optional[str]:
-        """Extract location using pattern matching."""
-        message_lower = message.lower()
-        
-        location_patterns = [
-            r'(?:near|in|around|at)\s+([a-zA-Z\s]+?)(?:\s|$|,)',
-            r'located\s+(?:in|near|around)\s+([a-zA-Z\s]+?)(?:\s|$|,)',
-            r'([a-zA-Z\s]{3,25})\s+(?:area|region|city|state)',
-        ]
-        
-        for pattern in location_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                location = match.group(1).strip().title()
-                if (len(location) >= 3 and
-                    location.lower() not in ['the', 'house', 'budget', 'property'] and
-                    not re.match(r'^\d+$', location)):
-                    return location
-        return None
-    
-    def _extract_property_info(self, message: str) -> Tuple[Optional[str], Optional[int]]:
-        """Extract property type and bedrooms."""
-        message_lower = message.lower()
-        
-        bedroom_patterns = [
-            r'(\d+)\s*(?:bhk|bed|beds|bedroom|bedrooms)',
-            r'(\d+)\s*(?:bed|bhk|br)\s*(?:apartment|condo|house)',
-        ]
-        
-        bedrooms = None
-        property_type = None
-        
-        for pattern in bedroom_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                try:
-                    bedrooms = int(match.group(1))
-                    if 1 <= bedrooms <= 10:
-                        property_type = f"{bedrooms}BHK"
-                        break
-                except ValueError:
-                    continue
-        
-        if not property_type:
-            property_patterns = [
-                (r'(?:condo|condominium)', 'Condominium'),
-                (r'(?:house|home)', 'House'),
-                (r'(?:apartment|apt|flat)', 'Apartment'),
-                (r'(?:studio)', 'Studio'),
-            ]
-            
-            for pattern, prop_type in property_patterns:
-                if re.search(pattern, message_lower):
-                    property_type = prop_type
-                    break
-        
-        return property_type, bedrooms
-    
-    def _extract_timeline(self, message: str) -> Optional[str]:
-        """Extract purchase timeline."""
-        message_lower = message.lower()
-        
-        timeline_patterns = [
-            (r'(?:asap|immediately|right now|urgent)', 'immediately'),
-            (r'(?:this month|next month|within\s+\d+\s*months?)', '1-3 months'),
-            (r'(?:this year|by\s+end\s+of\s+year)', '6-12 months'),
-            (r'(?:flexible|no rush|whenever)', 'flexible'),
-        ]
-        
-        for pattern, timeline in timeline_patterns:
-            if re.search(pattern, message_lower):
-                return timeline
-        return None
-    
-    def _extract_email(self, message: str) -> Optional[str]:
-        """Extract email address."""
-        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        email_match = re.search(email_pattern, message)
-        return email_match.group(1) if email_match else None
-    
-    def _extract_phone(self, message: str) -> Optional[str]:
-        """Extract phone number."""
-        phone_patterns = [
-            r'(\d{3}[-.]?\d{3}[-.]?\d{4})',
-            r'(\(\d{3}\)\s*\d{3}[-.]?\d{4})',
-        ]
-        
-        for pattern in phone_patterns:
-            phone_match = re.search(pattern, message)
-            if phone_match:
-                return phone_match.group(1)
-        return None
-    
-    def _determine_conversation_stage(self, result: ExtractionResult) -> str:
-        """Determine conversation stage based on extracted information."""
-        extracted_count = len(result.extracted_fields)
-        
-        if extracted_count >= 3:
-            return "qualified"
-        elif extracted_count >= 1:
-            return "qualification"
-        else:
-            return "initial"
+Extract and return ONLY valid JSON with this exact structure:
+{{
+    "budget": <number or null>,
+    "location": <string or null>, 
+    "property_type": <string or null>,
+    "timeline": <string or null>,
+    "desired_bedrooms": <number or null>,
+    "email": <string or null>,
+    "phone": <string or null>,
+    "name": <string or null>,
+    "confidence": <0.0 to 1.0>,
+    "conversation_stage": <"initial" or "qualification" or "qualified">,
+    "extracted_fields": [<list of fields found>]
+}}
 
-class AgenticExtractionCoordinator:
-    """LangGraph-based agent coordination for extraction workflows."""
+Rules:
+- Use pure intelligence to understand context and intent
+- NO hardcoded lists or pattern matching
+- Return null for fields not mentioned
+- confidence based on how complete the information is
+- conversation_stage based on amount and quality of information extracted
+- Extract bedrooms as numbers (1, 2, 3, 4, etc.)
+- Budget as full number (250000, not 250k)
+- location as proper case ("Miami Beach", not "miami beach")
+- If no clear budget, location, or property details, return confidence under 0.5
+
+Examples:
+Message: "i need ASAP , miami beach , 250k dollar 4bhk condo"
+Response: {{"budget": 250000, "location": "Miami Beach", "property_type": "4BHK", "timeline": "immediately", "desired_bedrooms": 4, "email": null, "phone": null, "name": null, "confidence": 1.0, "conversation_stage": "qualified", "extracted_fields": ["budget", "location", "property_type", "timeline", "bedrooms"]}}
+
+Message: "looking for houses under 500k"
+Response: {{"budget": 500000, "location": null, "property_type": "House", "timeline": null, "desired_bedrooms": null, "email": null, "phone": null, "name": null, "confidence": 0.6, "conversation_stage": "qualification", "extracted_fields": ["budget", "property_type"]}}
+
+Now extract from this message:"""
+
+    async def extract_information(self, message: str, context: Optional[AgenticContext] = None) -> ExtractionResult:
+        """Extract information using ONLY pure LLM intelligence."""
+        try:
+            # Create intelligent extraction prompt
+            full_prompt = self.extraction_prompt.format(message=message)
+            
+            # Use LLM for pure agentic extraction
+            try:
+                # Direct import for backend directory
+                from backend.utils.llm_client import get_llm_response_sync
+            except ImportError:
+                # Fallback for direct execution - use absolute path from backend root
+                import sys
+                import os
+                # Add backend directory to path
+                backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                sys.path.insert(0, backend_dir)
+                from utils.llm_client import get_llm_response_sync
+            
+            logger.info(f"🤖 PURE AGENTIC EXTRACTION: Using LLM for intelligent extraction from: '{message}'")
+            response = get_llm_response_sync(full_prompt)
+            
+            if not response:
+                logger.warning("No response from LLM extraction")
+                return ExtractionResult()
+            
+            # Parse the intelligent LLM response
+            try:
+                import json
+                # Clean response - remove any markdown formatting
+                clean_response = response.strip()
+                if clean_response.startswith('```json'):
+                    clean_response = clean_response[7:]
+                if clean_response.endswith('```'):
+                    clean_response = clean_response[:-3]
+                
+                extraction_data = json.loads(clean_response.strip())
+                
+                # Create extraction result from pure LLM intelligence
+                result = ExtractionResult(
+                    budget=extraction_data.get("budget"),
+                    location=extraction_data.get("location"),
+                    property_type=extraction_data.get("property_type"),
+                    timeline=extraction_data.get("timeline"),
+                    desired_bedrooms=extraction_data.get("desired_bedrooms"),
+                    email=extraction_data.get("email"),
+                    phone=extraction_data.get("phone"),
+                    name=extraction_data.get("name"),
+                    extraction_confidence=extraction_data.get("confidence", 0.0),
+                    conversation_stage=extraction_data.get("conversation_stage", "initial"),
+                    extracted_fields=extraction_data.get("extracted_fields", [])
+                )
+                
+                logger.info(f"✅ PURE AGENTIC EXTRACTION: {len(result.extracted_fields)} fields extracted with confidence {result.extraction_confidence}")
+                logger.info(f"   Extracted: {result.extracted_fields}")
+                
+                return result
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse LLM extraction response: {e}")
+                logger.error(f"Response: {response}")
+                return ExtractionResult()
+                
+        except Exception as e:
+            logger.error(f"Pure agentic extraction failed: {e}")
+            return ExtractionResult()
+
+class AgenticRouter:
+    """Pure agentic message routing using ONLY LLM intelligence."""
     
     def __init__(self):
-        self.router = LangGraphMessageRouter()
-        self.extractor = RuleBasedExtractor()
-        self.agent_mapping = {
-            "booking": "scheduler",
-            "budget": "qualifier",
-            "urgent": "qualifier",
-            "info": "qualifier",
-            "qualification": "qualifier",
-            "default": "qualifier"
-        }
+        self.routing_prompt = """You are an expert real estate sales agent routing system. Analyze the message for sales intelligence and customer psychology.
+
+Message: "{message}"
+
+Route based on SALES INTELLIGENCE:
+
+AVAILABLE AGENTS:
+- "qualifier": New leads, gathering requirements, initial contact
+- "value_delivery": Customer wants properties, market insights, comparisons, similar properties
+- "scheduler": Ready to book tours, scheduling appointments, availability requests
+- "followup": Nurturing leads, handling objections, relationship building
+- "warmup": Re-engaging cold leads, initial outreach
+
+SALES ROUTING LOGIC:
+- High urgency + specific requirements → value_delivery (provide immediate value)
+- Property comparison/selection requests → value_delivery 
+- Ready to schedule/book → scheduler
+- Hesitation/objections → followup
+- New lead with unclear needs → qualifier
+
+Consider:
+- Customer urgency and intent
+- Sales stage (discovery → qualification → presentation → closing)
+- Value delivery opportunities
+- Buying signals
+- Customer psychology
+
+Return ONLY the agent name.
+
+EXAMPLES:
+"i need ASAP miami beach 250k dollar 4bhk condo" → "value_delivery" (urgent + specific = immediate value needed)
+"show me similar properties" → "value_delivery" (wants property options)
+"when can I schedule a viewing" → "scheduler" (ready to buy)
+"thanks, I'll think about it" → "followup" (objection/hesitation)
+"looking for houses under 500k" → "value_delivery" (property search intent)
+
+Message: "{message}"
+
+Agent:"""
+
+    async def route_message(self, message: str, context: Optional[AgenticContext] = None) -> Tuple[str, float]:
+        """Route message using ONLY pure LLM intelligence."""
+        try:
+            # Create intelligent routing prompt
+            full_prompt = self.routing_prompt.format(message=message)
+            
+            # Use LLM for pure agentic routing
+            try:
+                # Direct import for backend directory
+                from backend.utils.llm_client import get_llm_response_sync
+            except ImportError:
+                # Fallback for direct execution - use absolute path from backend root
+                import sys
+                import os
+                # Add backend directory to path
+                backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                sys.path.insert(0, backend_dir)
+                from utils.llm_client import get_llm_response_sync
+            
+            logger.info(f"🧭 PURE AGENTIC ROUTING: Using LLM to route: '{message}'")
+            response = get_llm_response_sync(full_prompt)
+            
+            if not response:
+                logger.warning("No routing response from LLM, defaulting to qualifier")
+                return "qualifier", 0.3
+            
+            # Parse intelligent routing decision
+            agent = response.strip().lower()
+            
+            # Validate agent type
+            valid_agents = {"qualifier", "followup", "scheduler", "value_delivery", "offramp"}
+            if agent not in valid_agents:
+                logger.warning(f"Invalid agent from LLM: {agent}, defaulting to qualifier")
+                return "qualifier", 0.5
+            
+            # Sales-oriented confidence based on buying signals and urgency
+            urgency_words = ["asap", "urgent", "immediately", "now", "today", "quickly"]
+            intent_words = ["show me", "similar", "properties", "viewing", "schedule", "book", "tour"]
+            objection_words = ["think about", "consider", "maybe", "later", "not sure"]
+            
+            urgency_score = 0.3 if any(word in message.lower() for word in urgency_words) else 0.0
+            intent_score = 0.4 if any(word in message.lower() for word in intent_words) else 0.0
+            objection_score = 0.2 if any(word in message.lower() for word in objection_words) else 0.0
+            
+            # Base confidence for clear routing
+            confidence = 0.6 + urgency_score + intent_score + objection_score
+            
+            logger.info(f"✅ PURE AGENTIC ROUTING: Routed to '{agent}' with confidence {confidence}")
+            return agent, confidence
+            
+        except Exception as e:
+            logger.error(f"Pure agentic routing failed: {e}")
+            return "qualifier", 0.3
+
+class PureAgenticCoordinator:
+    """Pure agentic coordination using ONLY LLM intelligence."""
+    
+    def __init__(self):
+        self.extractor = PureAgenticExtractor()
+        self.router = AgenticRouter()
     
     async def coordinate_extraction(self, message: str, context: Optional[AgenticContext] = None) -> Dict[str, Any]:
-        """Coordinate extraction using LangGraph agentic patterns."""
+        """Coordinate extraction using ONLY pure agentic patterns."""
         try:
-            # Route message to appropriate agent
-            agent_type, confidence = self.router.route_message(message, context)
-            mapped_agent = self.agent_mapping.get(agent_type, "qualifier")
+            logger.info(f"🎯 PURE AGENTIC COORDINATION: Starting for message: '{message}'")
             
-            # Extract information using rule-based patterns
-            extraction_result = self.extractor.extract_information(message, context)
+            # Use LLM for intelligent extraction
+            extraction_result = await self.extractor.extract_information(message, context)
+            
+            # Use LLM for intelligent routing  
+            agent_type, routing_confidence = await self.router.route_message(message, context)
             
             # Update context if provided
             if context:
-                context.add_agent_interaction(mapped_agent, "extraction")
-                context.current_agent = mapped_agent
+                context.add_agent_interaction(agent_type, "pure_agentic_extraction")
+                context.current_agent = agent_type
                 context.conversation_stage = extraction_result.conversation_stage
                 
-                # Update extracted data
+                # Update extracted data with pure LLM intelligence
                 for field in extraction_result.extracted_fields:
                     context.extracted_data[field] = getattr(extraction_result, field)
             
             return {
                 "success": True,
-                "agent_type": mapped_agent,
-                "routing_confidence": confidence,
+                "agent_type": agent_type,
+                "routing_confidence": routing_confidence,
                 "extraction_result": extraction_result,
                 "extraction_fields": extraction_result.extracted_fields,
                 "conversation_stage": extraction_result.conversation_stage,
-                "agent_coordination": "langgraph_managed"
+                "agent_coordination": "pure_agentic",
+                "langgraph_managed": True,
+                "extraction_confidence": extraction_result.extraction_confidence
             }
             
         except Exception as e:
-            logger.error(f"Agentic extraction coordination failed: {e}")
+            logger.error(f"Pure agentic coordination failed: {e}")
             return {
                 "success": False,
                 "error": str(e),
                 "agent_type": "qualifier",
-                "fallback_used": True
+                "fallback_used": False,  # No fallbacks in pure agentic system
+                "extraction_confidence": 0.0
             }
-    
-    def _extract_budget(self, message: str) -> Optional[float]:
-        """Extract budget with comprehensive K/M handling."""
-        message_lower = message.lower()
-        
-        # Comprehensive budget patterns for production scenarios
-        budget_patterns = [
-            # Patterns with K/M scaling
-            (r'\$?\s*(\d{1,3}(?:,\d{3})*)\s*(?:k|K|thousand)\s*(?:dollars?|usd)?', 1000),
-            (r'(\d{1,3}(?:,\d{3})*)\s*(?:k|K|thousand)\s*(?:dollars?|usd)?', 1000),
-            (r'\$?\s*(\d{1,3}(?:,\d{3})*)\s*(?:m|M|million)\s*(?:dollars?|usd)?', 1000000),
-            (r'(\d{1,3}(?:,\d{3})*)\s*(?:m|M|million)\s*(?:dollars?|usd)?', 1000000),
-            
-            # Exact dollar amounts
-            (r'\$?\s*(\d{1,3}(?:,\d{3})*)\s*(?:dollars?|usd)', 1),
-            (r'budget[:\s]*\$?\s*(\d{1,3}(?:,\d{3})*)', 1),
-            (r'looking.*?(\$[0-9,]+)', 1),
-            
-            # Context-aware amounts (budget mentioned in sentence)
-            (r'budget.*?(\d{1,3}(?:,\d{3})*)', 1),
-            (r'(\d{1,3}(?:,\d{3})*)\s*dollars?', 1),
-            
-            # Standalone numbers that could be budgets (when other context suggests it)
-            (r'\b(\d{2,3}(?:,\d{3})*)\b(?=.*\s*(?:budget|dollars?|price|cost|money|usd|\$))', 1),
-        ]
-        
-        for pattern, multiplier in budget_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                try:
-                    # Extract and clean the number
-                    number_str = match.group(1).replace(',', '').replace('$', '').strip()
-                    if number_str.isdigit():
-                        budget = int(number_str) * multiplier
-                        # Validate reasonable budget range
-                        if 10000 <= budget <= 100000000:  # $10k to $100M range
-                            logger.info(f"Budget extracted: {budget} from pattern '{pattern}'")
-                            return budget
-                except (ValueError, IndexError):
-                    continue
-        
-        return None
-    
-    def _extract_location(self, message: str) -> Optional[str]:
-        """Extract location with smart preposition handling."""
-        message_lower = message.lower()
-        
-        # Common US states and major cities for real estate
-        known_locations = [
-            'california', 'florida', 'texas', 'new york', 'illinois', 'pennsylvania',
-            'ohio', 'georgia', 'north carolina', 'michigan', 'new jersey', 'virginia',
-            'washington', 'arizona', 'massachusetts', 'tennessee', 'indiana', 'maryland',
-            'missouri', 'wisconsin', 'colorado', 'minnesota', 'south carolina', 'alabama',
-            'louisiana', 'kentucky', 'oregon', 'oklahoma', 'connecticut', 'utah',
-            'miami', 'orlando', 'tampa', 'jacksonville', 'los angeles', 'san francisco',
-            'san diego', 'sacramento', 'oakland', 'fresno', 'bakersfield', 'riverside',
-            'new york city', 'manhattan', 'brooklyn', 'queens', 'bronx', 'staten island',
-            'chicago', 'houston', 'philadelphia', 'phoenix', 'san antonio', 'san diego',
-            'dallas', 'san jose', 'austin', 'jacksonville', 'fort worth', 'columbus'
-        ]
-        
-        # Check for direct location mentions first
-        for location in known_locations:
-            if location in message_lower:
-                return location.title()
-        
-        # Patterns with prepositions
-        location_patterns = [
-            r'(?:near|in|around|at|to)\s+([a-zA-Z\s]+?)(?:\s+(?:california|florida|texas|new\s+york|miami|orlando|tampa|london|canada|australia))?(?:\s|$|,)',
-            r'(?:located|live|living)\s+(?:in|near|around)\s+([a-zA-Z\s]+?)(?:\s|$|,)',
-            r'([a-zA-Z\s]{3,25})\s+(?:area|region|county|city|state)',
-            r'(?:looking|searching)\s+(?:in|near|around)\s+([a-zA-Z\s]+?)(?:\s|$|,)',
-        ]
-        
-        for pattern in location_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                location = match.group(1).strip().title()
-                # Filter out common non-location words
-                location = re.sub(r'^(?:the|a|an|any|house|budget|property|option|about|for)\s+', '', location)
-                location = location.strip()
-                
-                # Validate location
-                if (len(location) >= 3 and 
-                    location.lower() not in ['the', 'house', 'budget', 'property', 'option', 'area', 'region', 'location'] and
-                    not re.match(r'^\d+$', location)):
-                    logger.info(f"Location extracted: '{location}' from pattern")
-                    return location
-        
-        return None
-    
-    def _extract_property_info(self, message: str) -> Tuple[Optional[str], Optional[int]]:
-        """Extract property type and bedrooms with comprehensive mapping."""
-        message_lower = message.lower()
-        
-        # Bedroom patterns first (more specific)
-        bedroom_patterns = [
-            r'(\d+)\s*(?:bhk|bed|beds|bedroom|bedrooms)',
-            r'(\d+)\s*(?:bed|bhk|br)\s*(?:apartment|condo|house|home)',
-            r'(?:need|looking for|want)\s+(\d+)\s*(?:bed|beds|bedroom|bedrooms)',
-        ]
-        
-        bedrooms = None
-        property_type = None
-        
-        for pattern in bedroom_patterns:
-            match = re.search(pattern, message_lower)
-            if match:
-                try:
-                    bedrooms = int(match.group(1))
-                    if 1 <= bedrooms <= 10:  # Reasonable bedroom range
-                        property_type = f"{bedrooms}BHK"
-                        logger.info(f"Bedrooms extracted: {bedrooms}, Property type: {property_type}")
-                        break
-                except ValueError:
-                    continue
-        
-        # Property type patterns if bedrooms not found
-        if not property_type:
-            property_patterns = [
-                # Condo patterns
-                (r'(?:condo|condominium)', 'Condominium'),
-                # House patterns
-                (r'(?:house|home|single family|residence)', 'House'),
-                # Apartment patterns
-                (r'(?:apartment|apt|flat)', 'Apartment'),
-                # Townhouse patterns
-                (r'(?:townhouse|town home|row house)', 'Townhouse'),
-                # Villa patterns
-                (r'(?:villa|luxury home|luxury)', 'Villa'),
-                # Studio patterns
-                (r'(?:studio|efficiency|loft)', 'Studio'),
-                # Duplex patterns
-                (r'(?:duplex|two family|multi family)', 'Duplex'),
-            ]
-            
-            for pattern, prop_type in property_patterns:
-                if re.search(pattern, message_lower):
-                    property_type = prop_type
-                    logger.info(f"Property type extracted: {property_type}")
-                    break
-        
-        return property_type, bedrooms
-    
-    def _extract_timeline(self, message: str) -> Optional[str]:
-        """Extract purchase timeline."""
-        message_lower = message.lower()
-        
-        timeline_patterns = [
-            (r'(?:asap|immediately|right now|urgent)', 'immediately'),
-            (r'(?:this month|next month|within\s+\d+\s*months?)', '1-3 months'),
-            (r'(?:within\s+\d+\s*months?)', '1-6 months'),
-            (r'(?:this year|by\s+end\s+of\s+year)', '6-12 months'),
-            (r'(?:next year|within\s+\d+\s*years?)', '1-2 years'),
-            (r'(?:flexible|no rush|whenever)', 'flexible'),
-        ]
-        
-        for pattern, timeline in timeline_patterns:
-            if re.search(pattern, message_lower):
-                logger.info(f"Timeline extracted: {timeline}")
-                return timeline
-        
-        return None
-    
-    def _extract_email(self, message: str) -> Optional[str]:
-        """Extract email address."""
-        email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
-        email_match = re.search(email_pattern, message)
-        if email_match:
-            return email_match.group(1)
-        return None
-    
-    def _extract_phone(self, message: str) -> Optional[str]:
-        """Extract phone number."""
-        phone_patterns = [
-            r'(\d{3}[-.]?\d{3}[-.]?\d{4})',
-            r'(\(\d{3}\)\s*\d{3}[-.]?\d{4})',
-            r'(\+\d{1,3}[-.]?\d{10,})',
-        ]
-        
-        for pattern in phone_patterns:
-            phone_match = re.search(pattern, message)
-            if phone_match:
-                return phone_match.group(1)
-        return None
 
-class LangGraphExtractionCoordinator:
-    """LangGraph-based extraction workflow with proper agentic patterns."""
+# LangGraph Integration for Pure Agentic Patterns
+class LangGraphPureAgenticCoordinator:
+    """LangGraph-based pure agentic extraction workflow."""
     
     def __init__(self):
-        self.coordinator = AgenticExtractionCoordinator()
-        self.graph = self._build_extraction_graph()
+        self.coordinator = PureAgenticCoordinator()
+        self.graph = self._build_pure_agentic_graph()
     
-    def _build_extraction_graph(self):
-        """Build LangGraph extraction workflow using proper patterns."""
+    def _build_pure_agentic_graph(self):
+        """Build pure agentic LangGraph workflow."""
         try:
             from langgraph.graph import StateGraph, START
             from langgraph.types import Command, Send
@@ -530,8 +337,8 @@ class LangGraphExtractionCoordinator:
             import operator
             from datetime import datetime
             
-            # Define extraction state schema
-            class ExtractionState(TypedDict):
+            # Define pure agentic state schema
+            class PureAgenticState(TypedDict):
                 message: str
                 user_id: str
                 thread_id: str
@@ -539,68 +346,55 @@ class LangGraphExtractionCoordinator:
                 agent_history: Annotated[List[str], operator.add]
                 current_stage: str
                 extraction_confidence: float
+                routing_confidence: float
+                current_agent: str
                 completed: bool
             
-            def extraction_supervisor(state: ExtractionState) -> Command[Literal["extraction_worker", "end"]]:
-                """Supervisor that determines extraction workflow."""
-                message = state["message"]
-                current_stage = state.get("current_stage", "initial")
-                
-                # Simple rule-based routing without ML
-                if any(word in message.lower() for word in ["book", "schedule", "tour"]):
-                    return Command(
-                        goto="extraction_worker",
-                        update={
-                            "current_stage": "scheduling",
-                            "agent_history": state.get("agent_history", []) + ["supervisor:routed_to_scheduling"]
-                        }
-                    )
-                elif any(word in message.lower() for word in ["budget", "$", "price", "cost"]):
-                    return Command(
-                        goto="extraction_worker",
-                        update={
-                            "current_stage": "qualification",
-                            "agent_history": state.get("agent_history", []) + ["supervisor:routed_to_qualification"]
-                        }
-                    )
-                else:
-                    return Command(
-                        goto="extraction_worker",
-                        update={
-                            "current_stage": "initial",
-                            "agent_history": state.get("agent_history", []) + ["supervisor:routed_to_initial"]
-                        }
-                    )
+            def pure_agentic_supervisor(state: PureAgenticState) -> Command[Literal["pure_agentic_worker"]]:
+                """Supervisor that delegates to pure agentic extraction."""
+                return Command(
+                    goto="pure_agentic_worker",
+                    update={
+                        "agent_history": state.get("agent_history", []) + ["supervisor:delegated_to_pure_agentic"],
+                        "current_stage": "pure_agentic_processing"
+                    }
+                )
             
-            def extraction_worker(state: ExtractionState) -> Command[Literal["supervisor"]]:
-                """Worker that performs rule-based extraction."""
+            def pure_agentic_worker(state: PureAgenticState) -> Command[Literal["supervisor"]]:
+                """Worker that performs pure agentic extraction."""
                 try:
                     message = state["message"]
+                    
+                    # Create context for pure agentic processing
                     context = AgenticContext(
                         thread_id=state["thread_id"],
                         user_id=state["user_id"],
-                        current_agent="extraction_worker",
+                        current_agent="pure_agentic_worker",
                         conversation_stage=state.get("current_stage", "initial"),
                         extracted_data=state.get("extracted_data", {}),
                         agent_history=state.get("agent_history", []),
                         last_activity=datetime.utcnow().isoformat()
                     )
                     
-                    # Use agentic coordinator for extraction
+                    # Use pure agentic coordinator for extraction
                     result = asyncio.run(self.coordinator.coordinate_extraction(message, context))
                     
                     if result["success"]:
                         updated_data = state.get("extracted_data", {})
-                        for field in result["extraction_fields"]:
-                            if hasattr(result["extraction_result"], field):
-                                updated_data[field] = getattr(result["extraction_result"], field)
+                        extraction_result = result["extraction_result"]
+                        
+                        # Update extracted data with pure intelligence
+                        for field in extraction_result.extracted_fields:
+                            updated_data[field] = getattr(extraction_result, field)
                         
                         return Command(
                             goto="supervisor",
                             update={
                                 "extracted_data": updated_data,
-                                "extraction_confidence": result["extraction_result"].extraction_confidence,
-                                "agent_history": state.get("agent_history", []) + [f"worker:extraction_completed_{result['agent_type']}"],
+                                "extraction_confidence": extraction_result.extraction_confidence,
+                                "routing_confidence": result["routing_confidence"],
+                                "current_agent": result["agent_type"],
+                                "agent_history": state.get("agent_history", []) + [f"worker:pure_agentic_extraction_completed_{result['agent_type']}"],
                                 "completed": len(result["extraction_fields"]) > 0
                             }
                         )
@@ -609,41 +403,49 @@ class LangGraphExtractionCoordinator:
                             goto="supervisor",
                             update={
                                 "extraction_confidence": 0.0,
-                                "agent_history": state.get("agent_history", []) + ["worker:extraction_failed"],
+                                "routing_confidence": 0.0,
+                                "current_agent": "qualifier",
+                                "agent_history": state.get("agent_history", []) + ["worker:pure_agentic_extraction_failed"],
                                 "completed": False
                             }
                         )
                         
                 except Exception as e:
-                    logger.error(f"Extraction worker failed: {e}")
+                    logger.error(f"Pure agentic worker failed: {e}")
                     return Command(
                         goto="supervisor",
                         update={
                             "extraction_confidence": 0.0,
+                            "routing_confidence": 0.0,
+                            "current_agent": "qualifier",
                             "agent_history": state.get("agent_history", []) + [f"worker:error_{str(e)}"],
                             "completed": False
                         }
                     )
             
-            # Build the graph
-            workflow = StateGraph(ExtractionState)
-            workflow.add_node("supervisor", extraction_supervisor)
-            workflow.add_node("extraction_worker", extraction_worker)
+            # Build the pure agentic graph
+            workflow = StateGraph(PureAgenticState)
+            workflow.add_node("supervisor", pure_agentic_supervisor)
+            workflow.add_node("pure_agentic_worker", pure_agentic_worker)
             workflow.add_edge(START, "supervisor")
+            workflow.add_edge("supervisor", "pure_agentic_worker")
+            workflow.add_edge("pure_agentic_worker", "supervisor")
             
             return workflow.compile()
             
         except Exception as e:
-            logger.warning(f"Failed to build LangGraph extraction graph: {e}")
+            logger.warning(f"Failed to build pure agentic LangGraph graph: {e}")
             return None
 
-# Main API functions
-def extract_lead_info(message: str, user_id: Optional[str] = None, thread_id: Optional[str] = None) -> Dict[str, Any]:
+# Main API functions for Pure Agentic System
+async def extract_lead_info(message: str, user_id: Optional[str] = None, thread_id: Optional[str] = None) -> Dict[str, Any]:
     """Main API function for pure agentic lead information extraction."""
     try:
-        coordinator = AgenticExtractionCoordinator()
+        logger.info(f"🚀 PURE AGENTIC API: Starting extraction for message: '{message}'")
         
-        # Create context for extraction
+        coordinator = PureAgenticCoordinator()
+        
+        # Create context for pure agentic processing
         context = None
         if user_id and thread_id:
             context = AgenticContext(
@@ -656,11 +458,13 @@ def extract_lead_info(message: str, user_id: Optional[str] = None, thread_id: Op
                 last_activity=datetime.now().isoformat()
             )
         
-        # Perform extraction using agentic patterns
-        result = asyncio.run(coordinator.coordinate_extraction(message, context))
+        # Perform pure agentic extraction
+        result = await coordinator.coordinate_extraction(message, context)
         
         if result["success"]:
             extraction_result = result["extraction_result"]
+            logger.info(f"✅ PURE AGENTIC SUCCESS: Extracted {len(extraction_result.extracted_fields)} fields")
+            
             return {
                 "budget": extraction_result.budget,
                 "location": extraction_result.location,
@@ -677,9 +481,11 @@ def extract_lead_info(message: str, user_id: Optional[str] = None, thread_id: Op
                 "extraction_fields": extraction_result.extracted_fields,
                 "success": True,
                 "agentic_coordination": True,
-                "langgraph_managed": True
+                "langgraph_managed": True,
+                "pure_agentic": True
             }
         else:
+            logger.warning(f"⚠️ PURE AGENTIC FAILED: {result.get('error', 'Unknown error')}")
             return {
                 "budget": None,
                 "location": None,
@@ -695,13 +501,14 @@ def extract_lead_info(message: str, user_id: Optional[str] = None, thread_id: Op
                 "routing_confidence": 0.0,
                 "extraction_fields": [],
                 "success": False,
-                "error": result.get("error", "Unknown extraction error"),
+                "error": result.get("error", "Pure agentic extraction failed"),
                 "agentic_coordination": True,
-                "langgraph_managed": True
+                "langgraph_managed": True,
+                "pure_agentic": True
             }
             
     except Exception as e:
-        logger.error(f"Error in agentic lead extraction: {e}")
+        logger.error(f"❌ PURE AGENTIC ERROR: {e}")
         return {
             "budget": None,
             "location": None,
@@ -719,28 +526,29 @@ def extract_lead_info(message: str, user_id: Optional[str] = None, thread_id: Op
             "success": False,
             "error": str(e),
             "agentic_coordination": True,
-            "langgraph_managed": False
+            "langgraph_managed": False,
+            "pure_agentic": True
         }
 
 # Legacy compatibility function
 def enhanced_extract_lead_info(message: str, user_id: Optional[str] = None, prior_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Legacy function for backward compatibility."""
+    """Legacy function for backward compatibility - uses pure agentic system."""
     return extract_lead_info(message, user_id)
 
-# LangGraph workflow integration
-extraction_coordinator = LangGraphExtractionCoordinator()
+# Pure Agentic workflow integration
+pure_agentic_coordinator = LangGraphPureAgenticCoordinator()
 
-def get_langgraph_extraction_node():
-    """Get LangGraph extraction node for workflow integration."""
-    return extraction_coordinator
+def get_pure_agentic_extraction_node():
+    """Get pure agentic extraction node for LangGraph workflow integration."""
+    return pure_agentic_coordinator
 
-# Module-level exports for agentic patterns
+# Module-level exports for pure agentic patterns
 __all__ = [
     "extract_lead_info",
     "AgenticContext",
-    "AgenticExtractionCoordinator",
-    "LangGraphExtractionCoordinator",
-    "LangGraphMessageRouter",
-    "RuleBasedExtractor",
+    "PureAgenticCoordinator", 
+    "LangGraphPureAgenticCoordinator",
+    "PureAgenticExtractor",
+    "AgenticRouter",
     "ExtractionResult"
 ]

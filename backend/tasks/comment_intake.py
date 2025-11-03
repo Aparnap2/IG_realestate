@@ -10,12 +10,23 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 from celery import Celery
 
-from celery_app import celery_app
-from utils.supabase_client import supabase, save_lead
-from utils.audit import audit_log_event
-from utils.redis_client import set_conversation_state, get_conversation_state
-from tools.agent_tools import send_instagram_message, fetch_lead_magnet
-from models.lead import Lead
+# CRITICAL FIX: Standardized import path setup
+# Add parent directory to Python path for proper imports when running from backend dir
+import sys
+import os
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+parent_dir = os.path.dirname(backend_dir)  # Add parent directory so backend module can be found
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
+from backend.celery_app import celery_app
+from backend.utils.supabase_client import supabase, save_lead
+from backend.utils.audit import audit_log_event
+from backend.utils.redis_client import set_conversation_state, get_conversation_state
+from backend.tools.agent_tools import send_instagram_message, fetch_lead_magnet
+from backend.models.lead import Lead
 
 logger = logging.getLogger(__name__)
 

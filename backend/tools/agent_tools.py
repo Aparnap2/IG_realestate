@@ -19,10 +19,16 @@ import threading
 from langchain_core.tools import tool
 from pydantic import BaseModel, ValidationError, Field
 
-# Add the parent directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# CRITICAL FIX: Standardized import path setup
+# Add parent directory to Python path for proper imports when running from backend dir
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+parent_dir = os.path.dirname(backend_dir)  # Add parent directory so backend module can be found
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
 
-from utils.supabase_client import (
+from backend.utils.supabase_client import (
     query_properties_db,
     save_lead,
     get_config,
@@ -30,10 +36,10 @@ from utils.supabase_client import (
     validate_user_access,
     supabase_circuit_breaker
 )
-from utils.redis_client import cache_query_result, get_cached_query_result, redis_health_check, redis_circuit_breaker
-from utils.llm_client import get_llm_response_sync
-from utils.observability import log_hubspot_operation, log_supabase_query
-from utils.rate_limiter import check_rate_limit, record_request, RateLimitExceeded, RateLimitError
+from backend.utils.redis_client import cache_query_result, get_cached_query_result, redis_health_check, redis_circuit_breaker
+from backend.utils.llm_client import get_llm_response_sync
+from backend.utils.observability import log_hubspot_operation, log_supabase_query
+from backend.utils.rate_limiter import check_rate_limit, record_request, RateLimitExceeded, RateLimitError
 from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
@@ -544,7 +550,7 @@ def send_instagram_message(user_id: str, message: str) -> bool:
             logger.error(f"Input validation error: {e}")
             return False
 
-        from config import get_settings
+        from backend.config import get_settings
         settings = get_settings()
 
         if not settings.ENABLE_REAL_INSTAGRAM_API:
@@ -571,7 +577,7 @@ def send_instagram_message(user_id: str, message: str) -> bool:
 
             if response.status_code == 200:
                 # Log successful send
-                from utils.audit import audit_log_event
+                from backend.utils.audit import audit_log_event
                 audit_log_event("instagram_message_sent", {
                     "user_id": validated_input.user_id,
                     "authenticated_user_id": authenticated_user_id,
@@ -582,7 +588,7 @@ def send_instagram_message(user_id: str, message: str) -> bool:
                 return True
             else:
                 # Log failure
-                from utils.audit import audit_log_event
+                from backend.utils.audit import audit_log_event
                 audit_log_event("instagram_message_failed", {
                     "user_id": validated_input.user_id,
                     "authenticated_user_id": authenticated_user_id,
@@ -598,7 +604,7 @@ def send_instagram_message(user_id: str, message: str) -> bool:
             return result
         except Exception as e:
             logger.error(f"Instagram API call failed: {e}")
-            from utils.audit import audit_log_event
+            from backend.utils.audit import audit_log_event
             audit_log_event("instagram_message_error", {
                 "user_id": user_id,
                 "error": str(e)
@@ -609,7 +615,7 @@ def send_instagram_message(user_id: str, message: str) -> bool:
         raise
     except RateLimitExceeded:
         logger.warning("Rate limit exceeded for send_instagram_message")
-        from utils.audit import audit_log_event
+        from backend.utils.audit import audit_log_event
         audit_log_event("instagram_message_rate_limited", {
             "user_id": user_id,
             "message_length": len(message)
@@ -655,7 +661,7 @@ def get_available_calendar_slots(days_ahead: int = 7, time_of_day: str = "any") 
 
         # Get calendar slots with circuit breaker protection
         def _get_slots():
-            from tools.calendar_integration import get_available_calendar_slots as get_slots
+            from backend.tools.calendar_integration import get_available_calendar_slots as get_slots
             return get_slots(days_ahead=validated_input.days_ahead, time_of_day=validated_input.time_of_day)
 
         try:
@@ -665,7 +671,7 @@ def get_available_calendar_slots(days_ahead: int = 7, time_of_day: str = "any") 
             return result
         except Exception as e:
             logger.error(f"Calendar API call failed: {e}")
-            from utils.audit import audit_log_event
+            from backend.utils.audit import audit_log_event
             audit_log_event("calendar_slots_error", {"error": str(e)})
             return []
 
@@ -714,7 +720,7 @@ def book_calendar_event(
             description=description,
             property_addresses=property_addresses
         )
-        from tools.calendar_integration import create_tour_event
+        from backend.tools.calendar_integration import create_tour_event
         result = create_tour_event(
             start_time=validated_input.start_time,
             duration_minutes=validated_input.duration_minutes,
@@ -730,7 +736,7 @@ def book_calendar_event(
         return {"error": "Rate limit exceeded"}
     except Exception as e:
         print(f"Error booking calendar event: {e}")
-        from utils.audit import audit_log_event
+        from backend.utils.audit import audit_log_event
         audit_log_event("calendar_booking_error", {
             "error": str(e),
             "start_time": validated_input.start_time.isoformat(),
@@ -782,7 +788,7 @@ def create_hubspot_contact(
             logger.error(f"Input validation error: {e}")
             return {"error": "Invalid input parameters"}
 
-        from config import get_settings
+        from backend.config import get_settings
         settings = get_settings()
 
         # Gate HubSpot integration on access token availability
@@ -835,7 +841,7 @@ def create_hubspot_contact(
                 logger.info(f"Created HubSpot contact: {validated_input.email} (ID: {contact_id})")
 
                 # Log successful creation
-                from utils.audit import audit_log_event
+                from backend.utils.audit import audit_log_event
                 audit_log_event("hubspot_contact_created", {
                     "contact_id": contact_id,
                     "email": validated_input.email,
@@ -858,7 +864,7 @@ def create_hubspot_contact(
                 error_msg = f"HubSpot API error: {response.status_code} - {response.text}"
                 logger.error(f"Failed to create HubSpot contact: {error_msg}")
 
-                from utils.audit import audit_log_event
+                from backend.utils.audit import audit_log_event
                 audit_log_event("hubspot_contact_failed", {
                     "email": validated_input.email,
                     "status_code": response.status_code,
@@ -875,7 +881,7 @@ def create_hubspot_contact(
             return result
         except Exception as e:
             logger.error(f"HubSpot API call failed: {e}")
-            from utils.audit import audit_log_event
+            from backend.utils.audit import audit_log_event
             audit_log_event("hubspot_contact_error", {
                 "email": validated_input.email,
                 "error": str(e)
@@ -921,7 +927,7 @@ def create_hubspot_deal(
             amount=amount,
             deal_stage=deal_stage
         )
-        from config import get_settings
+        from backend.config import get_settings
         settings = get_settings()
 
         # Gate HubSpot integration on access token availability
@@ -979,7 +985,7 @@ def create_hubspot_deal(
             print(f"✅ Created HubSpot deal: {validated_input.deal_name} (ID: {deal_id})")
 
             # Log successful creation
-            from utils.audit import audit_log_event
+            from backend.utils.audit import audit_log_event
             audit_log_event("hubspot_deal_created", {
                 "deal_id": deal_id,
                 "contact_id": validated_input.contact_id,
@@ -1004,7 +1010,7 @@ def create_hubspot_deal(
             error_msg = f"HubSpot API error: {response.status_code} - {response.text}"
             print(f"❌ Failed to create HubSpot deal: {error_msg}")
 
-            from utils.audit import audit_log_event
+            from backend.utils.audit import audit_log_event
             audit_log_event("hubspot_deal_failed", {
                 "contact_id": validated_input.contact_id,
                 "deal_name": validated_input.deal_name,
@@ -1022,7 +1028,7 @@ def create_hubspot_deal(
         return {"error": "Rate limit exceeded"}
     except Exception as e:
         print(f"Error creating HubSpot deal: {e}")
-        from utils.audit import audit_log_event
+        from backend.utils.audit import audit_log_event
         audit_log_event("hubspot_deal_error", {
             "contact_id": validated_input.contact_id,
             "deal_name": validated_input.deal_name,
@@ -1138,7 +1144,7 @@ def fetch_lead_magnet(magnet_type: str) -> Dict[str, Any]:
 
         # Fetch lead magnet from Supabase Storage
         def _fetch_magnet():
-            from utils.supabase_client import supabase
+            from backend.utils.supabase_client import supabase
             
             # Get lead magnet metadata from database
             magnet_response = supabase.table("lead_magnets").select("*").eq("type", magnet_type).eq("active", True).execute()
@@ -1236,7 +1242,7 @@ def deliver_property_info(property_id: str, user_id: str) -> Dict[str, Any]:
 
         # Query property details
         def _get_property_details():
-            from utils.supabase_client import supabase
+            from backend.utils.supabase_client import supabase
             
             # Get property with full details
             property_response = supabase.table("properties").select("*").eq("id", property_id).execute()
@@ -1336,7 +1342,7 @@ def send_market_insights(location: str, insight_type: str = "general", user_id: 
 
         # Generate market insights using LLM
         def _generate_insights():
-            from utils.llm_client import get_llm_response_sync
+            from backend.utils.llm_client import get_llm_response_sync
             
             insights_prompt = f"""
             Generate comprehensive real estate market insights for {location}.
@@ -1475,7 +1481,7 @@ def create_nurture_sequence(
 
         # Generate nurture sequence based on lead profile
         def _generate_sequence():
-            from utils.llm_client import get_llm_response_sync
+            from backend.utils.llm_client import get_llm_response_sync
             
             # Determine nurture strategy based on score and stage
             if lead_stage == "nurturing":

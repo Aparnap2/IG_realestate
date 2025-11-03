@@ -16,12 +16,12 @@ from langchain_openai import ChatOpenAI
 # Add parent directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from schemas.state import AgentState
-from tools.agent_tools import send_instagram_message, fetch_lead_magnet
-from utils.redis_client import get_conversation_state, set_conversation_state
-from utils.audit import audit_log_event
-from utils.supabase_client import supabase
-from models.lead import Lead
+from backend.schemas.state import AgentState
+from backend.tools.agent_tools import send_instagram_message, fetch_lead_magnet
+from backend.utils.redis_client import get_conversation_state, set_conversation_state
+from backend.utils.audit import audit_log_event
+from backend.utils.supabase_client import supabase
+from backend.models.lead import Lead
 
 logger = logging.getLogger(__name__)
 

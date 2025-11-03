@@ -22,22 +22,22 @@ import hashlib
 load_dotenv()
 
 # Import proactive engagement validation and utilities
-from .proactive_validation import validate_proactive_engagement_conditions, PreconditionResult, get_validator
+from proactive_validation import validate_proactive_engagement_conditions, PreconditionResult, get_validator
 from config.settings import get_settings
 
 # Import simplified proactive engagement system
-from .proactive_engagement import (
+from proactive_engagement import (
     SimpleProactiveEngagement,
     ProactiveEngagementConfig,
     EngagementStrategy
 )
 
 # Import proactive response engine
-from .proactive_responses import generate_proactive_response
+from proactive_responses import generate_proactive_response
 
 # LangGraph and Redis checkpoint imports
 try:
-    from langgraph import StateGraph, END
+    from langgraph.graph import StateGraph, END
     from langgraph.checkpoint.redis import RedisSaver
     from langgraph.types import Send, Command
     from langgraph.graph.message import add_messages
@@ -196,7 +196,7 @@ class IntelligentModelRouter:
         """Initialize model router with capability mappings."""
         self.model_capabilities = {
             "anthropic/claude-3-7-sonnet-latest": [ModelCapability.REASONING, ModelCapability.CONVERSATION],
-            "nvidia/nemotron-nano-12b-v2-vl:free": [ModelCapability.EXTRACTION, ModelCapability.CONVERSATION],
+            "openai/gpt-oss-20b:free": [ModelCapability.EXTRACTION, ModelCapability.CONVERSATION],
             "openai/gpt-4o": [ModelCapability.REASONING, ModelCapability.ANALYSIS],
             "openai/gpt-3.5-turbo": [ModelCapability.EXTRACTION, ModelCapability.CONVERSATION],
             "google/gemini-2.5-flash": [ModelCapability.ANALYSIS, ModelCapability.CREATIVE]
@@ -297,14 +297,14 @@ class IntelligentModelRouter:
         
         elif complexity == TaskComplexity.MODERATE:
             if ModelCapability.EXTRACTION in capabilities:
-                return "nvidia/nemotron-nano-12b-v2-vl:free"
+                return "openai/gpt-oss-20b:free"
             elif ModelCapability.CONVERSATION in capabilities:
                 return "google/gemini-2.5-flash"
             else:
                 return "openai/gpt-3.5-turbo"
         
         else:  # SIMPLE
-            return "nvidia/nemotron-nano-12b-v2-vl:free"
+            return "openai/gpt-oss-20b:free"
 
 # Global instances
 redis_checkpoint_manager = RedisCheckpointManager()
@@ -475,7 +475,7 @@ except ImportError:
     print("⚠️ Google Generative AI not available. Install with: pip install google-generativeai")
 
 # Default model selection - use more efficient free models
-DEFAULT_OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", " nvidia/nemotron-nano-12b-v2-vl:free")
+DEFAULT_OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", " openai/gpt-oss-20b:free")
 
 def validate_api_key_environment() -> Dict[str, bool]:
     """Validate API key availability and return status for all LLM providers."""
@@ -690,7 +690,7 @@ async def get_llm_response(
     
     Args:
         prompt: The prompt to send to the LLM
-        model: Model to use (default: nvidia/nemotron-nano-12b-v2-vl:free)
+        model: Model to use (default: openai/gpt-oss-20b:free)
         max_tokens: Maximum tokens in response
         temperature: Temperature for response generation
         response_format: Optional OpenRouter response_format for JSON mode

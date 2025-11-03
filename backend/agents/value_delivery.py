@@ -19,9 +19,9 @@ from typing import Dict, Any, List, Optional
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from utils.llm_client import get_llm_response_sync
-from utils.supabase_client import query_properties_db, get_config, save_lead
-from tools.agent_tools import fetch_lead_magnet, send_instagram_message
-from schemas.state import AgentState
+from backend.utils.supabase_client import query_properties_db, get_config, save_lead
+from backend.tools.agent_tools import fetch_lead_magnet, send_instagram_message
+from backend.schemas.state import AgentState
 from utils.observability import track_performance
 from utils.audit import audit_log_event
 import logging

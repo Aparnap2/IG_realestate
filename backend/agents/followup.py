@@ -20,9 +20,9 @@ from typing import Dict, Any, List, Optional
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from utils.llm_client import get_llm_response_sync
-from utils.supabase_client import get_config, save_lead
-from tools.agent_tools import send_instagram_message, create_nurture_sequence, fetch_lead_magnet
-from schemas.state import AgentState
+from backend.utils.supabase_client import get_config, save_lead
+from backend.tools.agent_tools import send_instagram_message, create_nurture_sequence, fetch_lead_magnet
+from backend.schemas.state import AgentState
 from utils.observability import track_performance
 from utils.audit import audit_log_event
 from utils.lead_scoring import calculate_lead_score, lead_scorer

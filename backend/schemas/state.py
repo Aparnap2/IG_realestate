@@ -8,7 +8,7 @@ import os
 # Add the parent directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from models.lead import Lead
+from backend.models.lead import Lead
 
 class AgentState(TypedDict):
     """

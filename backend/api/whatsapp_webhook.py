@@ -11,13 +11,21 @@ import hmac
 import hashlib
 import logging
 from typing import Dict, Any, List, Optional
+import sys
+import os
+
+# CRITICAL FIX: Add backend directory to Python path for proper imports
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
+
 from fastapi import APIRouter, Request, HTTPException, Response
 from fastapi.responses import JSONResponse, PlainTextResponse
 from datetime import datetime
 
-from backend.booking.message_bus import MessageBus, NormalizedMessage
-from backend.utils.audit import audit_log_event
-from backend.utils.redis_client import redis_client
+from booking.message_bus import MessageBus, NormalizedMessage
+from utils.audit import audit_log_event
+from utils.redis_client import redis_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

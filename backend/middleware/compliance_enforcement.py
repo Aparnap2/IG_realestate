@@ -17,13 +17,15 @@ Addresses: Priority 1 Gap 1.2 - Compliance Enforcement Bypass
 
 import asyncio
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING
 from datetime import datetime
 
-from ..tools import compliance as compliance_tools
-from ..utils.audit import audit_log_event
-from ..communication.multi_channel_manager import MultiChannelManager
-from ..config.settings import get_settings
+from backend.tools import compliance as compliance_tools
+from backend.utils.audit import audit_log_event
+from backend.config.settings import get_settings
+
+if TYPE_CHECKING:
+    from backend.communication.multi_channel_manager import MultiChannelManager
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -42,6 +44,8 @@ class ComplianceEnforcementMiddleware:
     
     def __init__(self):
         """Initialize the compliance enforcement middleware."""
+        from backend.communication.multi_channel_manager import MultiChannelManager
+
         self.channel_manager = MultiChannelManager()
         
         logger.info("🚀 Initializing Compliance Enforcement Middleware")

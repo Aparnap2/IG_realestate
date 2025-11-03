@@ -11,18 +11,24 @@ from typing import Dict, Any, Optional
 import uuid
 import logging
 
-# Add the parent directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+# CRITICAL FIX: Standardized import path setup
+# Add parent directory to Python path for proper imports when running from backend dir
+backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+parent_dir = os.path.dirname(backend_dir)  # Add parent directory so backend module can be found
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+if backend_dir not in sys.path:
+    sys.path.insert(0, backend_dir)
 
 import asyncio
-from models.lead import Lead
-from schemas.state import AgentState
-from workflow import create_workflow
-from utils.redis_client import store_conversation_history
-from utils.observability import track_performance, metrics_collector
-from utils.enhanced_llm_extraction import extract_intent_and_details, classify_high_intent_patterns
-from utils.lead_scoring import score_lead_with_intent
-from integrations.hubspot_client import HubSpotClient, auto_create_high_intent_contact
+from backend.models.lead import Lead
+from backend.schemas.state import AgentState
+from backend.agents.prd_compliant_workflow import create_prd_compliant_workflow as create_workflow
+from backend.utils.redis_client import store_conversation_history
+from backend.utils.observability import track_performance, metrics_collector
+from backend.utils.enhanced_llm_extraction import extract_intent_and_details, classify_high_intent_patterns
+from backend.utils.lead_scoring import score_lead_with_intent
+from backend.integrations.hubspot_client import HubSpotClient, auto_create_high_intent_contact
 
 logger = logging.getLogger(__name__)
 
@@ -475,7 +481,7 @@ def health_check() -> Dict[str, Any]:
 def cleanup_old_threads():
     """Clean up old thread states from Redis"""
     try:
-        from utils.redis_client import redis_client
+        from backend.utils.redis_client import redis_client
         
         # Clean up threads older than 30 days
         # This is a placeholder - implement actual cleanup logic
@@ -513,7 +519,7 @@ async def process_lead_message(user_id: str, message: str, channel: str = "insta
         
         # Extract user profile information
         if not user_name:
-            from agents.prd_compliant_workflow import extract_user_profile
+            from backend.agents.prd_compliant_workflow import extract_user_profile
             user_name = extract_user_profile(user_id)
         
         print(f"👤 User profile: {user_name}")
@@ -529,7 +535,7 @@ async def process_lead_message(user_id: str, message: str, channel: str = "insta
         }
         
         # Initialize or get the workflow state
-        from agents.prd_compliant_workflow import run_prd_workflow
+        from backend.agents.prd_compliant_workflow import run_prd_workflow
         
         # Execute the PRD compliant workflow
         result = await run_prd_workflow(message_data)

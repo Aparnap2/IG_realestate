@@ -117,7 +117,7 @@ class IntelligentModelRouterEnhanced:
     
     def __init__(self):
         self.capability_matrix = {
-            AgentCapability.EXTRACTION: ["anthropic/claude-3-7-sonnet-latest", "nvidia/nemotron-nano-12b-v2-vl:free"],
+            AgentCapability.EXTRACTION: ["anthropic/claude-3-7-sonnet-latest", "openai/gpt-oss-20b:free"],
             AgentCapability.QUALIFICATION: ["anthropic/claude-3-7-sonnet-latest", "openai/gpt-4o"],
             AgentCapability.SCHEDULING: ["openai/gpt-4o", "google/gemini-2.5-flash"],
             AgentCapability.FOLLOWUP: ["google/gemini-2.5-flash", "nvidia/nemotron-nano-12b-vl:free"],
